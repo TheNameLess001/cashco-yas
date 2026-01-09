@@ -11,31 +11,22 @@ LOGO_PATH = "logo.png"
 
 st.set_page_config(page_title="Génération Factures", page_icon="📄", layout="wide")
 
-# --- STYLE CSS UNIFIÉ ---
+# --- STYLE CSS (GLOBAL) ---
 st.markdown(f"""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap');
-    
-    html, body, [class*="css"] {{
-        font-family: 'Poppins', sans-serif;
-    }}
+    html, body, [class*="css"] {{ font-family: 'Poppins', sans-serif; }}
     
     .stApp {{ background-color: #F8F9FA; }}
     h1, h2, h3 {{ color: {YASSIR_PURPLE} !important; }}
     
-    /* SIDEBAR BLANCHE FORCEE */
+    /* SIDEBAR BLANCHE */
     section[data-testid="stSidebar"] {{
         background-color: #FFFFFF !important;
         border-right: 2px solid {YASSIR_PURPLE};
     }}
     
-    .stButton>button {{
-        background-color: {YASSIR_PURPLE}; color: white; border-radius: 12px;
-        padding: 12px 24px; font-weight: 600; border: none; width: 100%; transition: 0.3s;
-        box-shadow: 0 4px 10px rgba(111, 66, 193, 0.2);
-    }}
-    .stButton>button:hover {{ background-color: #5a32a3; transform: translateY(-2px); }}
-    
+    /* KPI CARDS */
     div[data-testid="metric-container"] {{
         background-color: white; 
         border-left: 5px solid {YASSIR_PURPLE};
@@ -114,6 +105,8 @@ def generate_detail_pdf(c_data, df):
 
 # --- UI ---
 st.title("📄 Édition des Factures")
+st.markdown("Importez le fichier CSV. **Le Nom du partenaire sera détecté automatiquement.**")
+
 uploaded_file = st.file_uploader("📂 Fichier 'Detail_....csv'", type=['csv'])
 
 def_name = "Nom Partenaire"; df = None
@@ -150,8 +143,28 @@ if df is not None:
 
         st.markdown("### 🖨️ Téléchargements")
         c1, c2 = st.columns(2)
+        
+        # --- CORRECTION DES BOUTONS ICI ---
+        # Bouton 1 (Facture) : Style Violet Yassir
         b1 = base64.b64encode(generate_invoice_pdf(c_data, totals)).decode()
-        c1.markdown(f'<a href="data:application/pdf;base64,{b1}" download="Facture_{c_ref}.pdf"><button>📥 TÉLÉCHARGER FACTURE</button></a>', unsafe_allow_html=True)
+        c1.markdown(f'''
+            <a href="data:application/pdf;base64,{b1}" download="Facture_{c_ref}.pdf">
+                <button style="background-color:{YASSIR_PURPLE}; color:white; border:none; padding:12px 20px; border-radius:10px; width:100%; font-weight:bold; cursor:pointer;">
+                📥 TÉLÉCHARGER FACTURE
+                </button>
+            </a>
+        ''', unsafe_allow_html=True)
+        
+        # Bouton 2 (Détail) : Style Gris foncé
         b2 = base64.b64encode(generate_detail_pdf(c_data, df)).decode()
-        c2.markdown(f'<a href="data:application/pdf;base64,{b2}" download="Detail.pdf"><button style="background-color:grey;">📑 TÉLÉCHARGER DÉTAIL</button></a>', unsafe_allow_html=True)
+        c2.markdown(f'''
+            <a href="data:application/pdf;base64,{b2}" download="Detail.pdf">
+                <button style="background-color:#6c757d; color:white; border:none; padding:12px 20px; border-radius:10px; width:100%; font-weight:bold; cursor:pointer;">
+                📑 TÉLÉCHARGER DÉTAIL
+                </button>
+            </a>
+        ''', unsafe_allow_html=True)
+
     else: st.error("❌ Colonne 'Total Food' manquante.")
+else:
+    st.info("Attente du fichier...")
