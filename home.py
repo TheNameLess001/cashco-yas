@@ -1,32 +1,28 @@
 import streamlit as st
 import os
 
-# --- CONFIGURATION GLOBALE ---
+# --- CONFIGURATION ---
 YASSIR_PURPLE = "#6f42c1"
-st.set_page_config(
-    page_title="Yassir Partner Tool",
-    page_icon="🟣",
-    layout="wide"
-)
+LOGO_PATH = "logo.png"
 
-# --- STYLE CSS GLOBAL (S'applique à toutes les pages) ---
+st.set_page_config(page_title="Yassir Partner Tool", page_icon="🟣", layout="wide")
+
+# --- LOGO MENU (Haut Gauche) ---
+if os.path.exists(LOGO_PATH):
+    st.sidebar.image(LOGO_PATH, width=180) # Logo en haut du menu
+    st.sidebar.markdown("---")
+
+# --- CSS GLOBAL ---
 st.markdown(f"""
     <style>
-    /* Couleurs Yassir */
     .stApp {{ background-color: #F8F9FA; }}
     h1, h2, h3 {{ color: {YASSIR_PURPLE} !important; font-family: 'Arial', sans-serif; }}
-    
-    /* Boutons */
     .stButton>button {{
         background-color: {YASSIR_PURPLE}; color: white; border-radius: 8px; border: none;
         padding: 10px 24px; transition: 0.3s;
     }}
     .stButton>button:hover {{ background-color: #5a32a3; color: white; }}
-    
-    /* Sidebar */
     [data-testid="stSidebar"] {{ background-color: white; border-right: 2px solid {YASSIR_PURPLE}; }}
-    
-    /* Signature Footer */
     .footer {{
         position: fixed; left: 0; bottom: 0; width: 100%;
         background-color: white; color: #555; text-align: center;
@@ -37,40 +33,27 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # --- CONTENU ACCUEIL ---
-col1, col2 = st.columns([1, 4])
-with col1:
-    if os.path.exists("logo.png"):
-        st.image("logo.png", width=120)
-    else:
-        st.title("🟣")
+st.title("🟣 Portail Facturation Partenaires")
+st.markdown("### Solution automatisée de gestion des commissions")
 
-with col2:
-    st.title("Portail Facturation Partenaires")
-    st.markdown("### Solution automatisée de gestion des commissions")
-
-st.markdown("---")
-
-# Carte de bienvenue
 st.info("""
 **Bienvenue sur l'outil de gestion Yassir.**
 Cette plateforme vous permet de transformer les données brutes des opérations en factures partenaires conformes.
 
-👈 **Utilisez le menu à gauche pour naviguer :**
-1. **🛠️ Préparation Données** : Nettoyez et filtrez les exports bruts (Admin Earnings).
-2. **📄 Génération Factures** : Créez les PDF officiels (Facture & Détail) pour chaque partenaire.
+👈 **Utilisez le menu à gauche pour naviguer.**
 """)
 
-st.markdown("### 🚀 Workflow Recommandé")
+st.markdown("### 🚀 Workflow")
 c1, c2, c3 = st.columns(3)
 with c1:
-    st.markdown("#### Étape 1")
-    st.caption("Importez le fichier `admin-earnings-export.csv` dans l'onglet **Préparation**.")
+    st.markdown("#### 1. Préparation")
+    st.caption("Nettoyez l'export brut Admin Earnings.")
 with c2:
-    st.markdown("#### Étape 2")
-    st.caption("Sélectionnez un partenaire et téléchargez son fichier nettoyé `Detail_Commandes.csv`.")
+    st.markdown("#### 2. Sélection")
+    st.caption("Choisissez les restaurants et la période.")
 with c3:
-    st.markdown("#### Étape 3")
-    st.caption("Allez dans **Génération Factures**, importez le fichier nettoyé et éditez les PDF.")
+    st.markdown("#### 3. Facturation")
+    st.caption("Générez les PDF officiels.")
 
 # --- SIGNATURE ---
 st.markdown("""
