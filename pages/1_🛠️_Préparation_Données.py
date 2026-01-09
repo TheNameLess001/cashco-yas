@@ -5,8 +5,8 @@ import io
 # Configuration de la page
 st.set_page_config(page_title="Préparation Données", page_icon="🛠️", layout="wide")
 
-st.title("🛠️ Préparation des Données (Multi-Comptes)")
-st.markdown("Filtrez l'export brut `Admin Earnings` pour un ou **plusieurs restaurants** simultanément.")
+st.title("🛠️ Préparation des Données (Smart Select)")
+st.markdown("Utilisez la **recherche intelligente** pour sélectionner rapidement des groupes de magasins (ex: tapez 'KFC' pour tous les sélectionner).")
 
 # 1. UPLOAD
 uploaded_file = st.file_uploader("📂 Importez le fichier brut (admin-earnings-orders-export...)", type=['csv'])
@@ -17,107 +17,123 @@ if uploaded_file:
         df = pd.read_csv(uploaded_file, sep=None, engine='python')
         st.success(f"✅ Fichier chargé : {len(df)} lignes détectées.")
         
-        # 2. SELECTION PARTENAIRES (MULTIPLE AVEC SELECT ALL)
+        # 2. SELECTION INTELLIGENTE
         if 'restaurant name' in df.columns:
             # Récupération de la liste unique triée
-            partners = sorted(df['restaurant name'].dropna().unique().tolist())
+            all_partners = sorted(df['restaurant name'].dropna().unique().tolist())
             
-            # --- LOGIQUE "TOUT SÉLECTIONNER" ---
-            # On utilise le session_state pour manipuler le widget multiselect
+            # --- ZONE DE RECHERCHE RAPIDE ---
+            st.markdown("### 🔍 Sélection Rapide")
+            c_search, c_btn_add, c_btn_clear = st.columns([2, 1, 1])
             
-            # Fonction de callback appelée quand on clique sur la case "Tout sélectionner"
-            def toggle_select_all():
-                if st.session_state['select_all_box']:
-                    st.session_state['selected_partners'] = partners # Sélectionne tout
-                else:
-                    st.session_state['selected_partners'] = []       # Vide tout
+            # A. Barre de recherche
+            search_query = c_search.text_input("Tapez une marque (ex: KFC, Tacos, Rabat...)", placeholder="Rechercher...")
+            
+            # B. Calcul des correspondances
+            matches = []
+            if search_query:
+                matches = [p for p in all_partners if search_query.lower() in p.lower()]
+            
+            # C. Initialisation Session State (Mémoire)
+            if 'selected_partners_state' not in st.session_state:
+                st.session_state['selected_partners_state'] = []
 
-            # La case à cocher
-            st.checkbox(
-                "✅ Tout sélectionner / Tout désélectionner", 
-                key="select_all_box", 
-                on_change=toggle_select_all
-            )
-            # -----------------------------------
-            
-            # WIDGET MULTI-SELECT (Relié au session_state)
+            # D. Boutons d'action
+            with c_btn_add:
+                st.write("") # Spacer pour aligner le bouton
+                if search_query:
+                    # Bouton dynamique : "Ajouter les 12 KFC"
+                    if st.button(f"➕ Ajouter les ({len(matches)})", use_container_width=True):
+                        # On ajoute les nouveaux sans doublons
+                        current = set(st.session_state['selected_partners_state'])
+                        new_items = set(matches)
+                        st.session_state['selected_partners_state'] = list(current.union(new_items))
+                        st.rerun() # Rafraîchir pour afficher la sélection
+                else:
+                    # Bouton désactivé si pas de recherche
+                    st.button("➕ Ajouter", disabled=True, use_container_width=True)
+
+            with c_btn_clear:
+                st.write("") # Spacer
+                if st.button("🗑️ Tout Vider", use_container_width=True):
+                    st.session_state['selected_partners_state'] = []
+                    st.rerun()
+
+            # --- WIDGET MULTI-SELECT PRINCIPAL ---
+            # Il est piloté par le session_state
             selected_partners = st.multiselect(
-                "🏪 Sélectionnez le(s) Restaurant(s) à inclure :", 
-                options=partners,
-                key="selected_partners", # Clé importante pour le lien avec la checkbox
-                help="Utilisez la case ci-dessus pour tout sélectionner d'un coup."
+                "Vos magasins sélectionnés :", 
+                options=all_partners,
+                default=st.session_state['selected_partners_state'],
+                key="multiselect_widget", # Clé interne
+                on_change=lambda: st.session_state.update({'selected_partners_state': st.session_state.multiselect_widget}) # Synchro inverse (si l'utilisateur en retire un manuellement)
             )
             
+            # --- TRAITEMENT ---
             if selected_partners:
-                # Filtrage : On garde les lignes où le nom est DANS la liste sélectionnée
+                st.markdown("---")
+                # Filtrage
                 df_filtered = df[df['restaurant name'].isin(selected_partners)].copy()
                 
-                st.info(f"Commandes trouvées pour **{len(selected_partners)} restaurant(s)** : {len(df_filtered)} commandes.")
+                st.info(f"✅ **{len(selected_partners)} magasins** sélectionnés | **{len(df_filtered)} commandes** prêtes à l'export.")
                 
-                # 3. MAPPING AUTOMATIQUE DES COLONNES
+                # 3. MAPPING
                 df_clean = pd.DataFrame()
-                
-                # Récupération des colonnes standards
                 cols = df.columns.str.lower()
                 
-                # Date
-                if 'order day' in cols:
-                    df_clean['Date'] = df_filtered['order day']
-                elif 'date' in cols:
-                     df_clean['Date'] = df_filtered['date']
+                # Mapping intelligent (Date)
+                if 'order day' in cols: df_clean['Date'] = df_filtered['order day']
+                elif 'date' in cols: df_clean['Date'] = df_filtered['date']
                 
-                # ID
-                if 'order id' in cols:
-                    df_clean['ID Commande'] = df_filtered['order id']
-                elif 'order_id' in cols:
-                    df_clean['ID Commande'] = df_filtered['order_id']
+                # Mapping (ID)
+                if 'order id' in cols: df_clean['ID Commande'] = df_filtered['order id']
+                elif 'order_id' in cols: df_clean['ID Commande'] = df_filtered['order_id']
                 
-                # Montant
-                if 'item total' in cols:
-                    df_clean['Montant'] = df_filtered['item total']
-                elif 'total' in cols:
-                    df_clean['Montant'] = df_filtered['total']
+                # Mapping (Montant)
+                if 'item total' in cols: df_clean['Montant'] = df_filtered['item total']
+                elif 'total' in cols: df_clean['Montant'] = df_filtered['total']
                 
-                # Statut
-                if 'status' in cols:
-                    df_clean['Statut'] = df_filtered['status']
+                # Mapping (Statut)
+                if 'status' in cols: df_clean['Statut'] = df_filtered['status']
                 
-                # Optionnel : Ajouter le nom du resto dans le fichier propre
+                # Colonne Restaurant Source (Utile pour le multi-comptes)
                 df_clean['Restaurant Source'] = df_filtered['restaurant name']
                 
                 # Aperçu
-                st.markdown("### 📊 Aperçu du fichier consolidé")
-                st.dataframe(df_clean.head())
+                with st.expander("👁️ Voir un aperçu des données"):
+                    st.dataframe(df_clean.head())
                 
-                # Calcul Rapide pour vérif
+                # Calcul CA Total
                 try:
                     clean_sum = df_clean['Montant'].astype(str).str.replace('MAD','').str.replace(' ','').astype(float).sum()
-                    st.metric("Chiffre d'Affaires Total (Consolidé)", f"{clean_sum:,.2f} MAD")
+                    st.metric("💰 Chiffre d'Affaires Total (Sélection)", f"{clean_sum:,.2f} MAD")
                 except:
                     pass
                 
                 # 4. TELECHARGEMENT
                 csv_buffer = df_clean.to_csv(index=False).encode('utf-8')
                 
-                # Gestion du nom de fichier intelligent
+                # Nom de fichier dynamique
                 if len(selected_partners) == 1:
-                    filename = f"Detail_Commandes_{selected_partners[0].replace(' ', '_')}.csv"
+                    fname = f"Detail_{selected_partners[0].replace(' ','_')}.csv"
+                elif len(matches) > 0 and len(matches) == len(selected_partners):
+                     # Si on a sélectionné exactement tout ce qui correspond à la recherche (ex: "KFC")
+                     fname = f"Detail_Groupe_{search_query}.csv"
                 else:
-                    filename = "Detail_Commandes_Multi_Restos.csv"
+                    fname = "Detail_Multi_Magasins.csv"
                 
                 st.download_button(
-                    label="📥 Télécharger le fichier nettoyé",
+                    label="📥 Télécharger le fichier consolidé (CSV)",
                     data=csv_buffer,
-                    file_name=filename,
+                    file_name=fname,
                     mime="text/csv",
                     type="primary"
                 )
             else:
-                st.warning("👈 Veuillez sélectionner au moins un restaurant (ou cochez 'Tout sélectionner').")
+                st.info("👈 Utilisez la barre de recherche ou la liste pour commencer.")
             
         else:
-            st.error("Erreur: La colonne 'restaurant name' est introuvable dans ce fichier.")
-            st.write("Colonnes disponibles :", df.columns.tolist())
+            st.error("Erreur: La colonne 'restaurant name' est introuvable.")
 
     except Exception as e:
-        st.error(f"Erreur de lecture : {e}")
+        st.error(f"Erreur : {e}")
