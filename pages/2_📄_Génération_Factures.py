@@ -84,7 +84,7 @@ def generate_invoice_pdf(c_data, totals):
         else: pdf.cell(50, 7, l, 1, 0, 'L'); pdf.cell(40, 7, f"{v:,.2f}", 1, 1, 'R')
     aline("Total Commission HT", totals['comm_ht']); aline("TVA 20%", totals['tva']); aline("Total Facture TTC", totals['inv_ttc'], True)
     pdf.ln(2); aline("NET À PAYER PARTENAIRE", totals['net_pay'], True, True)
-    pdf.set_y(165); pdf.set_font('Arial', 'I', 8); pdf.set_text_color(100)
+    pdf.set_y(165); pdf.set_font('Arial', 'I', 8); pdf.set_text_color(200)
     pdf.cell(0, 5, f"Arrêté la présente facture à la somme de : {totals['inv_ttc']:,.2f} Dirhams (TTC)", 0, 1, 'L')
     pdf.cell(0, 5, "Mode de règlement : Virement bancaire sous 30 jours", 0, 1, 'L')
     return pdf.output(dest='S').encode('latin-1')
