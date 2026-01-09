@@ -3,7 +3,7 @@ import pandas as pd
 import io
 import os
 
-# --- 1. CONFIGURATION VISUELLE & CHARTE ---
+# --- 1. CONFIGURATION & CHARTE ---
 YASSIR_PURPLE = "#6f42c1"
 YASSIR_LIGHT = "#f3eafa"
 LOGO_PATH = "logo.png"
@@ -17,14 +17,10 @@ st.markdown(f"""
     h1, h2, h3 {{ color: {YASSIR_PURPLE} !important; }}
     .stButton>button {{
         background-color: {YASSIR_PURPLE}; color: white; border-radius: 12px;
-        padding: 12px 28px; font-weight: 600; border: none;
+        padding: 10px 24px; font-weight: 600; border: none;
         box-shadow: 0 4px 14px 0 rgba(111, 66, 193, 0.39); transition: all 0.2s ease-in-out;
     }}
     .stButton>button:hover {{ background-color: #5a32a3; transform: translateY(-2px); }}
-    div[data-testid="metric-container"] {{
-        background-color: white; border: 1px solid #e0e0e0;
-        padding: 20px; border-radius: 15px; text-align: center;
-    }}
     .search-box {{
         background-color: {YASSIR_LIGHT}; padding: 20px;
         border-radius: 15px; margin-bottom: 20px; border: 1px solid {YASSIR_PURPLE};
@@ -32,170 +28,179 @@ st.markdown(f"""
     </style>
 """, unsafe_allow_html=True)
 
-# --- FONCTION DE CHARGEMENT AVEC CACHE ---
-@st.cache_data(show_spinner=False)
-def load_data(uploaded_file):
+# --- 2. GESTION DE L'ÉTAT (SESSION STATE) ---
+if 'data' not in st.session_state:
+    st.session_state['data'] = None
+
+def load_csv(file):
     try:
-        return pd.read_csv(uploaded_file, sep=None, engine='python')
+        df = pd.read_csv(file, sep=None, engine='python')
+        # On normalise les noms de colonnes pour éviter les soucis
+        df.columns = df.columns.str.strip()
+        return df
     except Exception as e:
-        st.error(f"Erreur de lecture: {e}")
+        st.error(f"Erreur lecture: {e}")
         return None
 
-# --- 2. EN-TÊTE ---
-col_logo, col_title = st.columns([1, 5])
-with col_logo:
-    if os.path.exists(LOGO_PATH):
-        st.image(LOGO_PATH, width=100)
-    else:
-        st.title("🟣")
-with col_title:
-    st.title("Préparation & Filtrage")
-    st.markdown("Extraction des colonnes : `order day`, `order id`, `restaurant name`, `status`, `commission`, `Total Food`.")
+# --- 3. EN-TÊTE ---
+c_logo, c_titre = st.columns([1, 5])
+with c_logo:
+    if os.path.exists(LOGO_PATH): st.image(LOGO_PATH, width=100)
+    else: st.title("🟣")
+with c_titre:
+    st.title("Préparation & Filtrage Stable")
 
-# --- 3. UPLOAD ---
-st.write("") 
-uploaded_file = st.file_uploader("📂 Déposez votre fichier `Admin Earnings` ici (CSV)", type=['csv'])
+# --- 4. UPLOAD (Avec persistance) ---
+uploaded_file = st.file_uploader("📂 Fichier Admin Earnings (CSV)", type=['csv'])
 
-if uploaded_file:
-    df = load_data(uploaded_file)
+# Si un nouveau fichier arrive, on le charge dans la session
+if uploaded_file is not None:
+    df_loaded = load_csv(uploaded_file)
+    if df_loaded is not None:
+        st.session_state['data'] = df_loaded
+
+# --- 5. LOGIQUE PRINCIPALE (Basée sur la session) ---
+if st.session_state['data'] is not None:
+    df = st.session_state['data']
     
-    if df is not None:
-        # --- 4. SÉLECTION RESTAURANTS ---
-        if 'restaurant name' in df.columns:
-            all_partners = sorted(df['restaurant name'].dropna().unique().tolist())
-            
-            st.markdown(f'<div class="search-box">', unsafe_allow_html=True)
-            st.subheader("🔍 Sélection des Partenaires")
-            
-            c_search, c_action = st.columns([3, 1])
-            with c_search:
-                search_query = st.text_input("Tapez une marque pour filtrer (ex: KFC...)", placeholder="Recherche rapide...")
-            
-            matches = [p for p in all_partners if search_query.lower() in p.lower()] if search_query else []
-            
-            with c_action:
-                st.write("") 
-                st.write("") 
-                if search_query:
-                    if st.button(f"➕ Ajouter les ({len(matches)})", use_container_width=True):
-                        if 'selected_partners_state' not in st.session_state: st.session_state['selected_partners_state'] = []
-                        current = set(st.session_state['selected_partners_state'])
-                        st.session_state['selected_partners_state'] = list(current.union(set(matches)))
-                        st.rerun()
-                else:
-                    if st.button("🗑️ Réinitialiser", type="secondary", use_container_width=True):
-                        st.session_state['selected_partners_state'] = []
-                        st.rerun()
-            
-            if 'selected_partners_state' not in st.session_state: st.session_state['selected_partners_state'] = []
-            
-            selected_partners = st.multiselect(
-                "Liste des magasins sélectionnés :",
-                options=all_partners,
-                default=st.session_state['selected_partners_state'],
-                key="widget_partners",
-                on_change=lambda: st.session_state.update({'selected_partners_state': st.session_state.widget_partners})
-            )
-            st.markdown('</div>', unsafe_allow_html=True)
+    # Vérif colonne clé
+    # On cherche la colonne 'restaurant name' peu importe la casse
+    col_resto = next((c for c in df.columns if 'restaurant name' in c.lower()), None)
+    
+    if col_resto:
+        # A. SÉLECTION PARTENAIRES
+        all_partners = sorted(df[col_resto].dropna().unique().tolist())
+        
+        st.markdown(f'<div class="search-box">', unsafe_allow_html=True)
+        st.subheader("🔍 Sélection des Partenaires")
+        
+        c_search, c_add = st.columns([3, 1])
+        search_txt = c_search.text_input("Recherche rapide (ex: KFC)", key="search_bar")
+        
+        # Logique boutons
+        matches = [p for p in all_partners if search_txt.lower() in p.lower()] if search_txt else []
+        
+        with c_add:
+            st.write("")
+            st.write("")
+            if search_txt and st.button(f"➕ Ajouter ({len(matches)})", key="btn_add"):
+                if 'selected_partners_state' not in st.session_state: st.session_state['selected_partners_state'] = []
+                # Fusion sans doublons
+                current = set(st.session_state['selected_partners_state'])
+                st.session_state['selected_partners_state'] = list(current.union(set(matches)))
+                st.rerun()
 
-            if selected_partners:
-                # Filtrage initial
-                df_filtered = df[df['restaurant name'].isin(selected_partners)].copy()
+        # Widget Multiselect (Piloté par la session)
+        if 'selected_partners_state' not in st.session_state: st.session_state['selected_partners_state'] = []
+        
+        selected_partners = st.multiselect(
+            "Magasins sélectionnés :", 
+            options=all_partners,
+            default=st.session_state['selected_partners_state'],
+            key="partners_widget",
+            on_change=lambda: st.session_state.update({'selected_partners_state': st.session_state.partners_widget})
+        )
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        if selected_partners:
+            # B. FILTRAGE INITIAL (Par Resto)
+            df_step1 = df[df[col_resto].isin(selected_partners)].copy()
+            
+            # C. FILTRES AVANCÉS (STABILISÉS)
+            st.markdown("---")
+            with st.expander("🌪️ Filtres Avancés (Statut, Ville...)", expanded=True):
+                f1, f2 = st.columns(2)
                 
-                # --- 5. FILTRAGE AVANCÉ ---
-                st.markdown("---")
-                with st.expander("🌪️ Filtres Avancés (Statut, Ville...)", expanded=False):
-                    f1, f2 = st.columns(2)
+                # Identification colonnes
+                c_status = next((c for c in df.columns if c.lower() == 'status'), None)
+                c_city = next((c for c in df.columns if 'city' in c.lower()), None)
+                
+                # 1. Filtre Statut
+                if c_status:
+                    # IMPORTANT : On prend les statuts uniques de la sélection "Step 1" pour les options
+                    # Mais on ne filtre que si l'utilisateur change la sélection
+                    all_statuses = sorted(df_step1[c_status].astype(str).unique().tolist())
+                    sel_stats = f1.multiselect("Statut", all_statuses, default=all_statuses, key="ms_status")
                     
-                    # Filtre Statut
-                    col_status_guess = next((c for c in df.columns if c.lower() == 'status'), None)
-                    if col_status_guess:
-                        statuses = sorted(df_filtered[col_status_guess].astype(str).unique().tolist())
-                        # Par défaut on sélectionne tout, sinon ça vide le tableau
-                        sel_stats = f1.multiselect("Filtrer par Statut", statuses, default=statuses, key="filter_status")
-                        if sel_stats: df_filtered = df_filtered[df_filtered[col_status_guess].isin(sel_stats)]
-
-                    # Filtre Ville (si dispo)
-                    col_city_guess = next((c for c in df.columns if 'city' in c.lower()), None)
-                    if col_city_guess:
-                        cities = sorted(df_filtered[col_city_guess].astype(str).unique().tolist())
-                        sel_cities = f2.multiselect("Filtrer par Ville", cities, key="filter_city")
-                        if sel_cities: df_filtered = df_filtered[df_filtered[col_city_guess].isin(sel_cities)]
-
-                # --- 6. MAPPING DES 6 COLONNES DEMANDÉES ---
-                st.markdown("---")
-                st.subheader("🔗 Validation des Colonnes (Mapping)")
-                st.caption("Associez les colonnes de votre fichier brut aux 6 colonnes de sortie demandées.")
+                    # Application du filtre
+                    if sel_stats:
+                        df_step1 = df_step1[df_step1[c_status].isin(sel_stats)]
                 
-                cols = df.columns.tolist()
-                
-                # Auto-Detection des indices
-                idx_day = next((i for i, c in enumerate(cols) if 'day' in c.lower() or 'date' in c.lower()), 0)
-                idx_id = next((i for i, c in enumerate(cols) if 'id' in c.lower() and 'order' in c.lower()), 0)
-                idx_resto = next((i for i, c in enumerate(cols) if 'restaurant name' in c.lower()), 0)
-                idx_stat = next((i for i, c in enumerate(cols) if 'status' in c.lower()), 0)
-                idx_comm = next((i for i, c in enumerate(cols) if 'commission' in c.lower()), 0)
-                idx_food = next((i for i, c in enumerate(cols) if 'total' in c.lower() or 'item' in c.lower()), 0)
+                # 2. Filtre Ville
+                if c_city:
+                    all_cities = sorted(df_step1[c_city].astype(str).unique().tolist())
+                    sel_cities = f2.multiselect("Ville", all_cities, key="ms_city") # Pas de default pour ne pas encombrer
+                    
+                    if sel_cities:
+                        df_step1 = df_step1[df_step1[c_city].isin(sel_cities)]
 
-                c1, c2, c3 = st.columns(3)
-                col_day_src = c1.selectbox("1. order day", cols, index=idx_day)
-                col_id_src = c2.selectbox("2. order id", cols, index=idx_id)
-                col_resto_src = c3.selectbox("3. restaurant name", cols, index=idx_resto)
-                
-                c4, c5, c6 = st.columns(3)
-                col_stat_src = c4.selectbox("4. status", cols, index=idx_stat)
-                col_comm_src = c5.selectbox("5. restaurant commission", cols, index=idx_comm)
-                col_food_src = c6.selectbox("6. Total Food", cols, index=idx_food)
-
-                # --- 7. CRÉATION DU FICHIER FINAL ---
-                df_export = pd.DataFrame()
-                df_export['order day'] = df_filtered[col_day_src]
-                df_export['order id'] = df_filtered[col_id_src]
-                df_export['restaurant name'] = df_filtered[col_resto_src]
-                df_export['status'] = df_filtered[col_stat_src]
-                df_export['restaurant commission'] = df_filtered[col_comm_src]
-                df_export['Total Food'] = df_filtered[col_food_src]
-
-                # --- 8. KPI & NETTOYAGE POUR AFFICHAGE ---
-                total_food_val = 0.0
-                total_comm_val = 0.0
-
-                def clean_money(series):
-                    return pd.to_numeric(series.astype(str).str.replace('MAD','').str.replace(' ','').str.replace(',','.'), errors='coerce').fillna(0)
-
-                try:
-                    total_food_val = clean_money(df_export['Total Food']).sum()
-                    total_comm_val = clean_money(df_export['restaurant commission']).sum()
-                except: pass
-
-                st.markdown("### 📊 Résumé de la Sélection")
-                k1, k2, k3 = st.columns(3)
-                k1.metric("Nombre de Commandes", f"{len(df_export)}")
-                k2.metric("Total Food (Est.)", f"{total_food_val:,.2f} MAD")
-                k3.metric("Total Commission (Est.)", f"{total_comm_val:,.2f} MAD")
-
-                st.markdown("### 📋 Aperçu des Données (6 Colonnes)")
-                st.dataframe(df_export.head(50), use_container_width=True, height=300)
-
-                # --- 9. EXPORT ---
-                st.markdown("### 📥 Télécharger")
-                
-                csv_buffer = df_export.to_csv(index=False).encode('utf-8')
-                
-                if len(selected_partners) == 1: fname = f"Detail_{selected_partners[0].replace(' ','_')}.csv"
-                elif search_query: fname = f"Detail_Groupe_{search_query}.csv"
-                else: fname = "Detail_Commandes_Yassir.csv"
-
-                st.download_button(
-                    label="Télécharger le CSV prêt (6 colonnes)",
-                    data=csv_buffer,
-                    file_name=fname,
-                    mime="text/csv",
-                    type="primary",
-                    use_container_width=True
-                )
+            # D. MAPPING (6 Colonnes)
+            st.markdown("---")
+            st.subheader("🔗 Validation Colonnes")
             
-            else:
-                st.info("👈 Sélectionnez des magasins pour commencer.")
+            cols = df.columns.tolist()
+            # Auto-detection
+            idx_d = next((i for i, c in enumerate(cols) if 'day' in c.lower() or 'date' in c.lower()), 0)
+            idx_i = next((i for i, c in enumerate(cols) if 'id' in c.lower() and 'order' in c.lower()), 0)
+            idx_r = next((i for i, c in enumerate(cols) if 'restaurant name' in c.lower()), 0)
+            idx_s = next((i for i, c in enumerate(cols) if 'status' in c.lower()), 0)
+            idx_c = next((i for i, c in enumerate(cols) if 'commission' in c.lower()), 0)
+            idx_f = next((i for i, c in enumerate(cols) if 'total' in c.lower() or 'item' in c.lower()), 0)
+
+            c1, c2, c3 = st.columns(3)
+            src_day = c1.selectbox("1. order day", cols, index=idx_d, key="sel_day")
+            src_id = c2.selectbox("2. order id", cols, index=idx_i, key="sel_id")
+            src_res = c3.selectbox("3. restaurant name", cols, index=idx_r, key="sel_res")
+            
+            c4, c5, c6 = st.columns(3)
+            src_stat = c4.selectbox("4. status", cols, index=idx_s, key="sel_stat")
+            src_comm = c5.selectbox("5. commission", cols, index=idx_c, key="sel_comm")
+            src_food = c6.selectbox("6. Total Food", cols, index=idx_f, key="sel_food")
+
+            # Création DataFrame Final
+            df_final = pd.DataFrame()
+            df_final['order day'] = df_step1[src_day]
+            df_final['order id'] = df_step1[src_id]
+            df_final['restaurant name'] = df_step1[src_res]
+            df_final['status'] = df_step1[src_stat]
+            df_final['restaurant commission'] = df_step1[src_comm]
+            df_final['Total Food'] = df_step1[src_food]
+
+            # E. KPI & EXPORT
+            st.markdown("### 📊 Résumé")
+            # Nettoyage pour calcul
+            def clean_nums(s): return pd.to_numeric(s.astype(str).str.replace(r'[^\d.]', '', regex=True), errors='coerce').fillna(0)
+            
+            tot_food = clean_nums(df_final['Total Food']).sum()
+            tot_comm = clean_nums(df_final['restaurant commission']).sum()
+
+            k1, k2, k3 = st.columns(3)
+            k1.metric("Commandes", len(df_final))
+            k2.metric("Total Food", f"{tot_food:,.2f}")
+            k3.metric("Total Comm.", f"{tot_comm:,.2f}")
+
+            st.dataframe(df_final.head(50), use_container_width=True, height=250)
+            
+            csv = df_final.to_csv(index=False).encode('utf-8')
+            
+            # Nom fichier
+            if len(selected_partners) == 1: fname = f"Detail_{selected_partners[0].replace(' ','_')}.csv"
+            elif search_txt: fname = f"Detail_Groupe_{search_txt}.csv"
+            else: fname = "Detail_Commandes.csv"
+
+            st.download_button(
+                "📥 Télécharger CSV (6 Colonnes)", 
+                csv, fname, "text/csv", 
+                type="primary", 
+                use_container_width=True
+            )
+
         else:
-            st.error("Colonne 'restaurant name' introuvable.")
+            st.info("👈 Sélectionnez des magasins pour voir les données.")
+            
+    else:
+        st.error("Colonne 'restaurant name' introuvable.")
+
+else:
+    # Message d'accueil si pas de fichier en session
+    st.info("👋 Veuillez uploader un fichier pour commencer.")
