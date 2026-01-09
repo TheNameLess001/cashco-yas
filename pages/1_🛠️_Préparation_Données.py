@@ -1,139 +1,230 @@
 import streamlit as st
 import pandas as pd
 import io
+import os
 
-# Configuration de la page
+# --- 1. CONFIGURATION VISUELLE & CHARTE ---
+YASSIR_PURPLE = "#6f42c1"
+YASSIR_LIGHT = "#f3eafa"  # Violet très clair pour les fonds
+LOGO_PATH = "logo.png"
+
 st.set_page_config(page_title="Préparation Données", page_icon="🛠️", layout="wide")
 
-st.title("🛠️ Préparation des Données (Smart Select)")
-st.markdown("Utilisez la **recherche intelligente** pour sélectionner rapidement des groupes de magasins (ex: tapez 'KFC' pour tous les sélectionner).")
+# Injection CSS pour le "Look & Feel" Yassir
+st.markdown(f"""
+    <style>
+    /* Import Police Moderne */
+    @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap');
+    
+    html, body, [class*="css"] {{
+        font-family: 'Poppins', sans-serif;
+    }}
+    
+    /* Titres en Violet */
+    h1, h2, h3 {{ color: {YASSIR_PURPLE} !important; }}
+    
+    /* Boutons Principaux */
+    .stButton>button {{
+        background-color: {YASSIR_PURPLE};
+        color: white;
+        border-radius: 12px;
+        padding: 12px 28px;
+        font-weight: 600;
+        border: none;
+        box-shadow: 0 4px 14px 0 rgba(111, 66, 193, 0.39);
+        transition: all 0.2s ease-in-out;
+    }}
+    .stButton>button:hover {{
+        background-color: #5a32a3;
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px 0 rgba(111, 66, 193, 0.23);
+    }}
+    
+    /* Cartes de KPI */
+    div[data-testid="metric-container"] {{
+        background-color: white;
+        border: 1px solid #e0e0e0;
+        padding: 20px;
+        border-radius: 15px;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        text-align: center;
+    }}
+    
+    /* Container de recherche */
+    .search-box {{
+        background-color: {YASSIR_LIGHT};
+        padding: 20px;
+        border-radius: 15px;
+        margin-bottom: 20px;
+        border: 1px solid {YASSIR_PURPLE};
+    }}
+    </style>
+""", unsafe_allow_html=True)
 
-# 1. UPLOAD
-uploaded_file = st.file_uploader("📂 Importez le fichier brut (admin-earnings-orders-export...)", type=['csv'])
+# --- 2. EN-TÊTE ---
+col_logo, col_title = st.columns([1, 5])
+with col_logo:
+    if os.path.exists(LOGO_PATH):
+        st.image(LOGO_PATH, width=100)
+    else:
+        st.title("🟣")
+with col_title:
+    st.title("Préparation & Filtrage Avancé")
+    st.markdown("Transformez vos exports bruts en données exploitables pour la facturation.")
+
+# --- 3. UPLOAD ---
+st.write("") # Spacer
+uploaded_file = st.file_uploader("📂 Déposez votre fichier `Admin Earnings` ici (CSV)", type=['csv'])
 
 if uploaded_file:
     try:
-        # Lecture flexible du CSV
+        # Lecture
         df = pd.read_csv(uploaded_file, sep=None, engine='python')
-        st.success(f"✅ Fichier chargé : {len(df)} lignes détectées.")
         
-        # 2. SELECTION INTELLIGENTE
+        # --- 4. SÉLECTION RESTAURANTS (Moteur de Recherche Intelligent) ---
         if 'restaurant name' in df.columns:
-            # Récupération de la liste unique triée
             all_partners = sorted(df['restaurant name'].dropna().unique().tolist())
             
-            # --- ZONE DE RECHERCHE RAPIDE ---
-            st.markdown("### 🔍 Sélection Rapide")
-            c_search, c_btn_add, c_btn_clear = st.columns([2, 1, 1])
+            st.markdown(f'<div class="search-box">', unsafe_allow_html=True)
+            st.subheader("🔍 Sélection des Partenaires")
             
-            # A. Barre de recherche
-            search_query = c_search.text_input("Tapez une marque (ex: KFC, Tacos, Rabat...)", placeholder="Rechercher...")
+            c_search, c_action = st.columns([3, 1])
+            with c_search:
+                search_query = st.text_input("Tapez une marque pour filtrer (ex: KFC, Tacos...)", placeholder="Recherche rapide...")
             
-            # B. Calcul des correspondances
-            matches = []
-            if search_query:
-                matches = [p for p in all_partners if search_query.lower() in p.lower()]
+            # Logique d'ajout intelligent
+            matches = [p for p in all_partners if search_query.lower() in p.lower()] if search_query else []
             
-            # C. Initialisation Session State (Mémoire)
-            if 'selected_partners_state' not in st.session_state:
-                st.session_state['selected_partners_state'] = []
-
-            # D. Boutons d'action
-            with c_btn_add:
-                st.write("") # Spacer pour aligner le bouton
+            with c_action:
+                st.write("") # Alignement
+                st.write("") 
                 if search_query:
-                    # Bouton dynamique : "Ajouter les 12 KFC"
                     if st.button(f"➕ Ajouter les ({len(matches)})", use_container_width=True):
-                        # On ajoute les nouveaux sans doublons
+                        if 'selected_partners_state' not in st.session_state: st.session_state['selected_partners_state'] = []
                         current = set(st.session_state['selected_partners_state'])
-                        new_items = set(matches)
-                        st.session_state['selected_partners_state'] = list(current.union(new_items))
-                        st.rerun() # Rafraîchir pour afficher la sélection
+                        st.session_state['selected_partners_state'] = list(current.union(set(matches)))
+                        st.rerun()
                 else:
-                    # Bouton désactivé si pas de recherche
-                    st.button("➕ Ajouter", disabled=True, use_container_width=True)
-
-            with c_btn_clear:
-                st.write("") # Spacer
-                if st.button("🗑️ Tout Vider", use_container_width=True):
-                    st.session_state['selected_partners_state'] = []
-                    st.rerun()
-
-            # --- WIDGET MULTI-SELECT PRINCIPAL ---
-            # Il est piloté par le session_state
+                    if st.button("🗑️ Réinitialiser", type="secondary", use_container_width=True):
+                        st.session_state['selected_partners_state'] = []
+                        st.rerun()
+            
+            # Widget Multiselect
+            if 'selected_partners_state' not in st.session_state: st.session_state['selected_partners_state'] = []
+            
             selected_partners = st.multiselect(
-                "Vos magasins sélectionnés :", 
+                "Liste des magasins sélectionnés :",
                 options=all_partners,
                 default=st.session_state['selected_partners_state'],
-                key="multiselect_widget", # Clé interne
-                on_change=lambda: st.session_state.update({'selected_partners_state': st.session_state.multiselect_widget}) # Synchro inverse (si l'utilisateur en retire un manuellement)
+                key="widget_partners",
+                on_change=lambda: st.session_state.update({'selected_partners_state': st.session_state.widget_partners})
             )
-            
-            # --- TRAITEMENT ---
+            st.markdown('</div>', unsafe_allow_html=True)
+
             if selected_partners:
-                st.markdown("---")
-                # Filtrage
+                # Filtrage initial par Restaurant
                 df_filtered = df[df['restaurant name'].isin(selected_partners)].copy()
                 
-                st.info(f"✅ **{len(selected_partners)} magasins** sélectionnés | **{len(df_filtered)} commandes** prêtes à l'export.")
+                # --- 5. FILTRAGE AVANCÉ (Multi-Colonnes) ---
+                st.markdown("---")
+                st.subheader("🌪️ Filtres Avancés")
                 
-                # 3. MAPPING
-                df_clean = pd.DataFrame()
-                cols = df.columns.str.lower()
+                with st.expander("Afficher les options de filtrage détaillées", expanded=True):
+                    f1, f2, f3 = st.columns(3)
+                    
+                    # Filtre A: Statut (si dispo)
+                    cols_lower = [c.lower() for c in df.columns]
+                    
+                    # Détection auto des colonnes clés
+                    col_status_name = next((c for c in df.columns if c.lower() == 'status'), None)
+                    col_city_name = next((c for c in df.columns if 'city' in c.lower()), None)
+                    col_payment_name = next((c for c in df.columns if 'payment' in c.lower()), None)
+                    
+                    # Widget 1 : Statut
+                    if col_status_name:
+                        statuses = sorted(df_filtered[col_status_name].astype(str).unique().tolist())
+                        selected_statuses = f1.multiselect("Filtrer par Statut", statuses, default=statuses)
+                        if selected_statuses:
+                            df_filtered = df_filtered[df_filtered[col_status_name].isin(selected_statuses)]
+                    
+                    # Widget 2 : Ville (si dispo)
+                    if col_city_name:
+                        cities = sorted(df_filtered[col_city_name].astype(str).unique().tolist())
+                        selected_cities = f2.multiselect("Filtrer par Ville", cities)
+                        if selected_cities:
+                            df_filtered = df_filtered[df_filtered[col_city_name].isin(selected_cities)]
+                            
+                    # Widget 3 : Type de paiement (si dispo)
+                    if col_payment_name:
+                         payments = sorted(df_filtered[col_payment_name].astype(str).unique().tolist())
+                         selected_payments = f3.multiselect("Moyen de Paiement", payments)
+                         if selected_payments:
+                             df_filtered = df_filtered[df_filtered[col_payment_name].isin(selected_payments)]
+
+                # --- 6. KPI & APERÇU ---
+                st.markdown("---")
                 
-                # Mapping intelligent (Date)
-                if 'order day' in cols: df_clean['Date'] = df_filtered['order day']
-                elif 'date' in cols: df_clean['Date'] = df_filtered['date']
+                # Nettoyage et Calcul Montant
+                col_amt_name = next((c for c in df.columns if 'total' in c.lower() or 'item total' in c.lower()), None)
+                total_revenue = 0.0
                 
-                # Mapping (ID)
-                if 'order id' in cols: df_clean['ID Commande'] = df_filtered['order id']
-                elif 'order_id' in cols: df_clean['ID Commande'] = df_filtered['order_id']
+                if col_amt_name:
+                    try:
+                        clean_vals = df_filtered[col_amt_name].astype(str).str.replace('MAD','').str.replace(' ','').str.replace(',','.')
+                        df_filtered['clean_amount_calc'] = pd.to_numeric(clean_vals, errors='coerce').fillna(0)
+                        total_revenue = df_filtered['clean_amount_calc'].sum()
+                    except:
+                        pass
+
+                # Affichage KPI (Cartes)
+                k1, k2, k3 = st.columns(3)
+                k1.metric("Magasins Actifs", f"{df_filtered['restaurant name'].nunique()}")
+                k2.metric("Volume Commandes", f"{len(df_filtered)}")
+                k3.metric("Chiffre d'Affaires (Est.)", f"{total_revenue:,.2f} MAD")
+
+                # Mapping Final pour Export
+                df_export = pd.DataFrame()
+                # On essaie de mapper intelligemment
+                map_date = next((c for c in df.columns if 'day' in c.lower() or 'date' in c.lower()), df.columns[0])
+                map_id = next((c for c in df.columns if 'id' in c.lower() and 'order' in c.lower()), df.columns[1])
                 
-                # Mapping (Montant)
-                if 'item total' in cols: df_clean['Montant'] = df_filtered['item total']
-                elif 'total' in cols: df_clean['Montant'] = df_filtered['total']
+                df_export['Date'] = df_filtered[map_date]
+                df_export['ID Commande'] = df_filtered[map_id]
+                if col_amt_name: df_export['Montant'] = df_filtered[col_amt_name]
+                if col_status_name: df_export['Statut'] = df_filtered[col_status_name]
+                df_export['Restaurant Source'] = df_filtered['restaurant name'] # Important pour multi-comptes
+
+                # Aperçu Tableau
+                st.markdown("### 📋 Données Prêtes")
+                st.dataframe(df_export.head(50), use_container_width=True, height=300)
+
+                # --- 7. TÉLÉCHARGEMENT ---
+                st.markdown("### 📥 Exporter")
                 
-                # Mapping (Statut)
-                if 'status' in cols: df_clean['Statut'] = df_filtered['status']
+                csv_buffer = df_export.to_csv(index=False).encode('utf-8')
                 
-                # Colonne Restaurant Source (Utile pour le multi-comptes)
-                df_clean['Restaurant Source'] = df_filtered['restaurant name']
-                
-                # Aperçu
-                with st.expander("👁️ Voir un aperçu des données"):
-                    st.dataframe(df_clean.head())
-                
-                # Calcul CA Total
-                try:
-                    clean_sum = df_clean['Montant'].astype(str).str.replace('MAD','').str.replace(' ','').astype(float).sum()
-                    st.metric("💰 Chiffre d'Affaires Total (Sélection)", f"{clean_sum:,.2f} MAD")
-                except:
-                    pass
-                
-                # 4. TELECHARGEMENT
-                csv_buffer = df_clean.to_csv(index=False).encode('utf-8')
-                
-                # Nom de fichier dynamique
+                # Nommage intelligent
                 if len(selected_partners) == 1:
                     fname = f"Detail_{selected_partners[0].replace(' ','_')}.csv"
-                elif len(matches) > 0 and len(matches) == len(selected_partners):
-                     # Si on a sélectionné exactement tout ce qui correspond à la recherche (ex: "KFC")
-                     fname = f"Detail_Groupe_{search_query}.csv"
+                elif search_query:
+                    fname = f"Detail_Groupe_{search_query}.csv"
                 else:
                     fname = "Detail_Multi_Magasins.csv"
-                
-                st.download_button(
-                    label="📥 Télécharger le fichier consolidé (CSV)",
+
+                c_dl, _ = st.columns([1, 2])
+                c_dl.download_button(
+                    label="Télécharger le fichier CSV nettoyé",
                     data=csv_buffer,
                     file_name=fname,
                     mime="text/csv",
-                    type="primary"
+                    use_container_width=True
                 )
-            else:
-                st.info("👈 Utilisez la barre de recherche ou la liste pour commencer.")
             
+            else:
+                st.info("👈 Commencez par sélectionner un ou plusieurs restaurants via la recherche.")
+
         else:
-            st.error("Erreur: La colonne 'restaurant name' est introuvable.")
+            st.error("Colonne 'restaurant name' introuvable dans le CSV.")
 
     except Exception as e:
-        st.error(f"Erreur : {e}")
+        st.error(f"Erreur lors du traitement : {e}")
