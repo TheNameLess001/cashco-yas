@@ -17,16 +17,35 @@ if uploaded_file:
         df = pd.read_csv(uploaded_file, sep=None, engine='python')
         st.success(f"✅ Fichier chargé : {len(df)} lignes détectées.")
         
-        # 2. SELECTION PARTENAIRES (MULTIPLE)
+        # 2. SELECTION PARTENAIRES (MULTIPLE AVEC SELECT ALL)
         if 'restaurant name' in df.columns:
             # Récupération de la liste unique triée
             partners = sorted(df['restaurant name'].dropna().unique().tolist())
             
-            # WIDGET MULTI-SELECT
+            # --- LOGIQUE "TOUT SÉLECTIONNER" ---
+            # On utilise le session_state pour manipuler le widget multiselect
+            
+            # Fonction de callback appelée quand on clique sur la case "Tout sélectionner"
+            def toggle_select_all():
+                if st.session_state['select_all_box']:
+                    st.session_state['selected_partners'] = partners # Sélectionne tout
+                else:
+                    st.session_state['selected_partners'] = []       # Vide tout
+
+            # La case à cocher
+            st.checkbox(
+                "✅ Tout sélectionner / Tout désélectionner", 
+                key="select_all_box", 
+                on_change=toggle_select_all
+            )
+            # -----------------------------------
+            
+            # WIDGET MULTI-SELECT (Relié au session_state)
             selected_partners = st.multiselect(
                 "🏪 Sélectionnez le(s) Restaurant(s) à inclure :", 
-                partners,
-                help="Vous pouvez sélectionner plusieurs magasins pour créer un fichier consolidé."
+                options=partners,
+                key="selected_partners", # Clé importante pour le lien avec la checkbox
+                help="Utilisez la case ci-dessus pour tout sélectionner d'un coup."
             )
             
             if selected_partners:
@@ -39,7 +58,6 @@ if uploaded_file:
                 df_clean = pd.DataFrame()
                 
                 # Récupération des colonnes standards
-                # On gère les variations de noms possibles
                 cols = df.columns.str.lower()
                 
                 # Date
@@ -64,7 +82,7 @@ if uploaded_file:
                 if 'status' in cols:
                     df_clean['Statut'] = df_filtered['status']
                 
-                # Optionnel : Ajouter le nom du resto dans le fichier propre pour vérification
+                # Optionnel : Ajouter le nom du resto dans le fichier propre
                 df_clean['Restaurant Source'] = df_filtered['restaurant name']
                 
                 # Aperçu
@@ -72,7 +90,6 @@ if uploaded_file:
                 st.dataframe(df_clean.head())
                 
                 # Calcul Rapide pour vérif
-                # Nettoyage rapide pour l'affichage de la métrique seulement
                 try:
                     clean_sum = df_clean['Montant'].astype(str).str.replace('MAD','').str.replace(' ','').astype(float).sum()
                     st.metric("Chiffre d'Affaires Total (Consolidé)", f"{clean_sum:,.2f} MAD")
@@ -96,7 +113,7 @@ if uploaded_file:
                     type="primary"
                 )
             else:
-                st.warning("👈 Veuillez sélectionner au moins un restaurant dans la liste ci-dessus.")
+                st.warning("👈 Veuillez sélectionner au moins un restaurant (ou cochez 'Tout sélectionner').")
             
         else:
             st.error("Erreur: La colonne 'restaurant name' est introuvable dans ce fichier.")
