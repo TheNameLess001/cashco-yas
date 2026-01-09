@@ -1,15 +1,13 @@
 import streamlit as st
 import pandas as pd
-from fpdf import FPDF
-import base64
-from datetime import datetime
 import os
 
-# --- 1. CONFIGURATION ---
+# --- 1. CONFIGURATION & STYLE ---
 YASSIR_PURPLE = "#6f42c1"
+YASSIR_LIGHT = "#f3eafa"
 LOGO_PATH = "logo.png"
 
-st.set_page_config(page_title="Génération Factures", page_icon="📄", layout="wide")
+st.set_page_config(page_title="Préparation Données", page_icon="🛠️", layout="wide")
 
 st.markdown(f"""
     <style>
@@ -18,270 +16,189 @@ st.markdown(f"""
     h1, h2, h3 {{ color: {YASSIR_PURPLE} !important; }}
     .stButton>button {{
         background-color: {YASSIR_PURPLE}; color: white; border-radius: 12px;
-        padding: 12px 24px; font-weight: 600; border: none; width: 100%; transition: 0.3s;
+        padding: 10px 24px; font-weight: 600; border: none;
+        box-shadow: 0 4px 14px 0 rgba(111, 66, 193, 0.39); transition: all 0.2s ease-in-out;
     }}
     .stButton>button:hover {{ background-color: #5a32a3; transform: translateY(-2px); }}
-    div[data-testid="metric-container"] {{
-        background-color: white; border-left: 5px solid {YASSIR_PURPLE};
-        padding: 15px; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+    .search-box {{
+        background-color: {YASSIR_LIGHT}; padding: 20px;
+        border-radius: 15px; margin-bottom: 20px; border: 1px solid {YASSIR_PURPLE};
     }}
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. MOTEUR PDF ---
-def hex_to_rgb(hex_code):
-    return tuple(int(hex_code.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
+# --- 2. GESTION DE LA SESSION (PERSISTANCE) ---
+if 'global_df' not in st.session_state:
+    st.session_state['global_df'] = None
+if 'file_signature' not in st.session_state:
+    st.session_state['file_signature'] = None
+if 'selected_partners' not in st.session_state:
+    st.session_state['selected_partners'] = []
 
-class PDFTemplate(FPDF):
-    def header(self):
-        if os.path.exists(LOGO_PATH):
-            self.image(LOGO_PATH, 10, 8, 30)
-        else:
-            self.set_font('Arial', 'B', 24)
-            r, g, b = hex_to_rgb(YASSIR_PURPLE)
-            self.set_text_color(r, g, b)
-            self.cell(50, 15, 'Yassir', 0, 0, 'L')
-        
-        self.set_xy(10, 28)
-        self.set_font('Arial', 'B', 9)
-        self.set_text_color(0)
-        self.cell(0, 4, 'YASSIR MAROC', 0, 1, 'L')
-        self.set_font('Arial', '', 8)
-        self.set_text_color(80)
-        self.cell(0, 4, 'VILLA 269 LOTISSEMENT MANDARONA', 0, 1, 'L')
-        self.cell(0, 4, 'SIDI MAAROUF CASABLANCA - Maroc', 0, 1, 'L')
-        self.cell(0, 4, 'ICE: 002148105000084', 0, 1, 'L')
-        self.ln(5)
+# --- 3. CHARGEMENT STABLE ---
+def process_file_upload(uploaded_file):
+    if uploaded_file is None: return
 
-    def footer(self):
-        self.set_y(-22)
-        self.set_font('Arial', '', 7)
-        self.set_text_color(120)
-        self.multi_cell(0, 3, "YASSIR MAROC SARL au capital de 2,000,000 DH\nVILLA 269 LOTISSEMENT MANDARONA SIDI MAAROUF CASABLANCA - Maroc\nICE N°002148105000084 - RC 413733 - IF 26164744", 0, 'C')
-        self.set_y(-12)
-        r, g, b = hex_to_rgb(YASSIR_PURPLE)
-        self.set_text_color(r, g, b)
-        self.set_font('Arial', 'B', 8)
-        self.cell(0, 10, f'Page {self.page_no()}/{{nb}}', 0, 0, 'R')
-
-def generate_invoice_pdf(c_data, totals):
-    pdf = PDFTemplate()
-    pdf.alias_nb_pages()
-    pdf.add_page()
-    r, g, b = hex_to_rgb(YASSIR_PURPLE)
-
-    # INFOS FACTURE (DROITE)
-    pdf.set_xy(110, 50)
-    pdf.set_font('Arial', 'B', 14)
-    pdf.set_text_color(r, g, b)
-    pdf.cell(90, 8, "FACTURE COMMISSION", 0, 1, 'R')
-    pdf.set_x(110)
-    pdf.set_font('Arial', 'B', 10)
-    pdf.set_text_color(0)
-    pdf.cell(90, 6, f"N°: {c_data['ref']}", 0, 1, 'R')
-    pdf.set_x(110)
-    pdf.set_font('Arial', '', 10)
-    pdf.cell(90, 6, f"Date: {datetime.now().strftime('%d/%m/%Y')}", 0, 1, 'R')
-
-    # BLOC CLIENT (GAUCHE - LE fameux bloc violet)
-    start_y = 50
-    # Fond Gris
-    pdf.set_fill_color(248, 248, 248)
-    pdf.set_draw_color(220, 220, 220)
-    pdf.rect(10, start_y, 90, 35, 'FD')
-    # Barre Violette
-    pdf.set_fill_color(r, g, b)
-    pdf.rect(10, start_y, 3, 35, 'F')
+    file_sig = f"{uploaded_file.name}_{uploaded_file.size}"
     
-    # Contenu Texte
-    pdf.set_xy(16, start_y + 4)
-    pdf.set_font('Arial', 'B', 10)
-    pdf.set_text_color(0)
-    # ICI : On affiche le nom du partenaire
-    pdf.cell(80, 5, f"{c_data['name']}", 0, 1, 'L')
-    
-    pdf.set_xy(16, start_y + 10)
-    pdf.set_font('Arial', '', 9)
-    pdf.set_text_color(60)
-    pdf.cell(80, 5, f"{c_data['address']}", 0, 1, 'L')
-    pdf.set_xy(16, start_y + 15)
-    pdf.cell(80, 5, f"{c_data['city']}", 0, 1, 'L')
-    pdf.set_xy(16, start_y + 20)
-    pdf.cell(80, 5, f"ICE: {c_data['ice']}", 0, 1, 'L')
-    if c_data['rc']:
-        pdf.set_xy(16, start_y + 25)
-        pdf.cell(80, 5, f"RC: {c_data['rc']}", 0, 1, 'L')
-
-    # TABLEAU
-    pdf.set_y(100)
-    pdf.set_fill_color(r, g, b)
-    pdf.set_draw_color(r, g, b)
-    pdf.set_text_color(255)
-    pdf.set_font('Arial', 'B', 9)
-    cols = [60, 40, 40, 50]
-    headers = ['Période', 'Ventes TTC (Food)', 'Taux Comm.', 'Commission HT']
-    for i, h in enumerate(headers):
-        pdf.cell(cols[i], 10, h, 1, 0, 'C', 1)
-    pdf.ln()
-    
-    pdf.set_draw_color(200)
-    pdf.set_text_color(0)
-    pdf.set_font('Arial', '', 9)
-    pdf.cell(cols[0], 10, f"{c_data['period']}", 1, 0, 'C')
-    pdf.cell(cols[1], 10, f"{totals['sales']:,.2f}", 1, 0, 'C')
-    pdf.cell(cols[2], 10, f"{c_data['rate']}%", 1, 0, 'C')
-    pdf.cell(cols[3], 10, f"{totals['comm_ht']:,.2f}", 1, 1, 'C')
-
-    # TOTAUX
-    pdf.ln(8)
-    x_tot = 110
-    def add_line(label, val, bold=False, bg=False):
-        pdf.set_x(x_tot)
-        pdf.set_font('Arial', 'B' if bold else '', 9)
-        pdf.set_text_color(0)
-        if bg:
-            pdf.set_fill_color(r, g, b)
-            pdf.set_text_color(255)
-            pdf.cell(50, 9, label, 0, 0, 'L', 1)
-            pdf.cell(40, 9, f"{val:,.2f} DH", 0, 1, 'R', 1)
-        else:
-            pdf.cell(50, 7, label, 1, 0, 'L')
-            pdf.cell(40, 7, f"{val:,.2f}", 1, 1, 'R')
-
-    add_line("Total Commission HT", totals['comm_ht'])
-    add_line("TVA 20%", totals['tva'])
-    add_line("Total Facture TTC", totals['inv_ttc'], bold=True)
-    pdf.ln(2)
-    add_line("NET À PAYER PARTENAIRE", totals['net_pay'], bold=True, bg=True)
-
-    # Info Légale
-    pdf.set_y(165)
-    pdf.set_font('Arial', 'I', 8)
-    pdf.set_text_color(100)
-    pdf.cell(0, 5, f"Arrêté la présente facture à la somme de : {totals['inv_ttc']:,.2f} Dirhams (TTC)", 0, 1, 'L')
-    pdf.cell(0, 5, "Mode de règlement : Virement bancaire sous 30 jours", 0, 1, 'L')
-
-    return pdf.output(dest='S').encode('latin-1')
-
-def generate_detail_pdf(c_data, df):
-    pdf = PDFTemplate()
-    pdf.alias_nb_pages()
-    pdf.add_page()
-    r, g, b = hex_to_rgb(YASSIR_PURPLE)
-
-    pdf.set_y(50)
-    pdf.set_font('Arial', 'B', 14)
-    pdf.set_text_color(r, g, b)
-    pdf.cell(0, 10, f"DÉTAIL DES COMMANDES - {c_data['period']}", 0, 1, 'C')
-    pdf.ln(5)
-
-    pdf.set_fill_color(240)
-    pdf.set_draw_color(200)
-    pdf.set_font('Arial', 'B', 8)
-    pdf.set_text_color(0)
-    cols_w = [40, 60, 40, 50]
-    cols_n = ['Date', 'ID Commande', 'Montant Food', 'Statut']
-    x_start = (210 - sum(cols_w)) / 2
-    pdf.set_x(x_start)
-    for i, c in enumerate(cols_n):
-        pdf.cell(cols_w[i], 8, c, 1, 0, 'C', 1)
-    pdf.ln()
-
-    pdf.set_font('Arial', '', 8)
-    for _, row in df.iterrows():
-        d_val = str(row.get('order day', '-'))[:10]
-        i_val = str(row.get('order id', '-'))
-        raw_m = str(row.get('Total Food', '0')).replace('MAD','').replace(' ','').replace(',','.')
+    if st.session_state['file_signature'] != file_sig:
         try:
-            m_val = float(raw_m)
-            m_str = f"{m_val:,.2f}"
-        except: m_str = "0.00"
-        s_val = str(row.get('status', '-'))
-        pdf.set_x(x_start)
-        pdf.cell(cols_w[0], 6, d_val, 1, 0, 'C')
-        pdf.cell(cols_w[1], 6, i_val, 1, 0, 'C')
-        pdf.cell(cols_w[2], 6, m_str, 1, 0, 'R')
-        pdf.cell(cols_w[3], 6, s_val, 1, 1, 'C')
-    return pdf.output(dest='S').encode('latin-1')
-
-
-# --- 4. INTERFACE ---
-st.title("📄 Édition des Factures")
-st.markdown("Importez le fichier CSV (étape 1). **Les infos du partenaire seront détectées automatiquement.**")
-
-uploaded_file = st.file_uploader("📂 Fichier 'Detail_....csv'", type=['csv'])
-
-# VALEURS PAR DÉFAUT
-default_name = "Nom du Partenaire"
-df = None
-
-# LOGIQUE DE PRÉ-REMPLISSAGE
-if uploaded_file:
-    try:
-        df = pd.read_csv(uploaded_file, sep=None, engine='python')
-        if 'restaurant name' in df.columns:
-            # On prend le premier nom trouvé dans le fichier
-            default_name = df['restaurant name'].dropna().iloc[0]
-            st.success(f"✅ Partenaire détecté : **{default_name}**")
-    except:
-        pass
-
-# SIDEBAR (Maintenant en dessous du chargement pour être dynamique)
-if os.path.exists(LOGO_PATH): st.sidebar.image(LOGO_PATH, width=140)
-st.sidebar.markdown("### ⚙️ Infos Partenaire")
-
-# On utilise la valeur détectée comme valeur par défaut
-c_name = st.sidebar.text_input("Nom / Raison Sociale", value=default_name)
-c_addr = st.sidebar.text_input("Adresse", "Adresse du restaurant...")
-c_city = st.sidebar.text_input("Ville", "CASABLANCA")
-c_ice = st.sidebar.text_input("ICE", "Ex: 00123...")
-c_rc = st.sidebar.text_input("RC", "")
-
-st.sidebar.markdown("---")
-st.sidebar.markdown("### 💰 Conditions")
-c_period = st.sidebar.text_input("Période", "NOVEMBRE 2025")
-c_ref = st.sidebar.text_input("N° Facture", f"F-{datetime.now().strftime('%Y%m')}-001")
-c_rate = st.sidebar.number_input("Taux Commission (%)", value=15.0, step=0.5)
-
-# LOGIQUE DE GÉNÉRATION
-if df is not None:
-    try:
-        req_col = 'Total Food'
-        if req_col not in df.columns:
-            st.error(f"❌ Colonne '{req_col}' manquante.")
-        else:
-            # Calculs
-            clean_sales = df[req_col].astype(str).str.replace(r'[^\d.]', '', regex=True)
-            df['calc_amount'] = pd.to_numeric(clean_sales, errors='coerce').fillna(0)
+            df = pd.read_csv(uploaded_file, sep=None, engine='python')
+            df.columns = df.columns.str.strip()
             
-            total_sales = df['calc_amount'].sum()
-            comm_ht = total_sales * (c_rate / 100)
-            tva = comm_ht * 0.20
-            inv_ttc = comm_ht + tva
-            net_pay = total_sales - inv_ttc
+            st.session_state['global_df'] = df
+            st.session_state['file_signature'] = file_sig
+            st.session_state['selected_partners'] = [] 
             
-            totals = {'sales': total_sales, 'comm_ht': comm_ht, 'tva': tva, 'inv_ttc': inv_ttc, 'net_pay': net_pay}
-            client_data = {'name': c_name, 'address': c_addr, 'city': c_city, 'ice': c_ice, 'rc': c_rc, 'period': c_period, 'ref': c_ref, 'rate': c_rate}
+        except Exception as e:
+            st.error(f"Erreur de lecture : {e}")
 
+# --- 4. EN-TÊTE ---
+c_logo, c_titre = st.columns([1, 5])
+with c_logo:
+    if os.path.exists(LOGO_PATH): st.image(LOGO_PATH, width=100)
+    else: st.title("🟣")
+with c_titre:
+    st.title("Préparation & Filtrage")
+
+# --- 5. UPLOAD ---
+uploaded_file = st.file_uploader("📂 Fichier Admin Earnings (CSV)", type=['csv'])
+process_file_upload(uploaded_file)
+
+# --- 6. LOGIQUE PRINCIPALE ---
+if st.session_state['global_df'] is not None:
+    df = st.session_state['global_df']
+    
+    col_resto = next((c for c in df.columns if 'restaurant name' in c.lower()), None)
+    
+    if col_resto:
+        all_partners = sorted(df[col_resto].dropna().unique().tolist())
+        
+        # --- A. SÉLECTION ---
+        st.markdown(f'<div class="search-box">', unsafe_allow_html=True)
+        st.subheader("🔍 Sélection des Magasins")
+        
+        c_search, c_add, c_reset = st.columns([3, 1, 1])
+        search_txt = c_search.text_input("Recherche rapide (ex: KFC)", key="sb_search")
+        matches = [p for p in all_partners if search_txt.lower() in p.lower()] if search_txt else []
+        
+        with c_add:
+            st.write("") 
+            st.write("") 
+            if search_txt and st.button(f"➕ Ajouter ({len(matches)})", key="btn_add"):
+                current = set(st.session_state['selected_partners'])
+                st.session_state['selected_partners'] = list(current.union(set(matches)))
+                st.rerun()
+            elif not search_txt:
+                 st.button("➕ Ajouter", disabled=True, key="btn_add_dis")
+
+        with c_reset:
+            st.write("")
+            st.write("")
+            if st.button("🗑️ Vider", key="btn_clear"):
+                st.session_state['selected_partners'] = []
+                st.rerun()
+
+        sel_partners = st.multiselect(
+            "Liste active :",
+            options=all_partners,
+            key="selected_partners" 
+        )
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        # --- B. FILTRAGE ---
+        if sel_partners:
+            df_step1 = df[df[col_resto].isin(sel_partners)].copy()
+            
             st.markdown("---")
-            k1, k2, k3, k4 = st.columns(4)
-            k1.metric("Ventes (Food)", f"{total_sales:,.2f} DH")
-            k2.metric(f"Com ({c_rate}%)", f"{comm_ht:,.2f} DH")
-            k3.metric("TTC Yassir", f"{inv_ttc:,.2f} DH")
-            k4.metric("Net Partenaire", f"{net_pay:,.2f} DH", delta="Final")
+            with st.expander("🌪️ Filtres Avancés (Statut, Ville...)", expanded=True):
+                f1, f2, f3 = st.columns(3)
+                
+                c_stat = next((c for c in df.columns if c.lower() == 'status'), None)
+                c_city = next((c for c in df.columns if 'city' in c.lower()), None)
+                c_pay = next((c for c in df.columns if 'payment' in c.lower()), None)
+                
+                if c_stat:
+                    opts_stat = sorted(df_step1[c_stat].astype(str).unique().tolist())
+                    sel_stat = f1.multiselect("Statut", opts_stat, default=opts_stat, key="f_stat")
+                    if sel_stat: df_step1 = df_step1[df_step1[c_stat].isin(sel_stat)]
+                
+                if c_city:
+                    opts_city = sorted(df_step1[c_city].astype(str).unique().tolist())
+                    sel_city = f2.multiselect("Ville", opts_city, key="f_city")
+                    if sel_city: df_step1 = df_step1[df_step1[c_city].isin(sel_city)]
 
-            st.markdown("### 🖨️ Téléchargements")
-            c1, c2 = st.columns(2)
-            
-            pdf_bytes = generate_invoice_pdf(client_data, totals)
-            b64_pdf = base64.b64encode(pdf_bytes).decode()
-            c1.markdown(f'<a href="data:application/pdf;base64,{b64_pdf}" download="Facture_{c_ref}.pdf"><button>📥 TÉLÉCHARGER LA FACTURE</button></a>', unsafe_allow_html=True)
-            
-            det_bytes = generate_detail_pdf(client_data, df)
-            b64_det = base64.b64encode(det_bytes).decode()
-            c2.markdown(f'<a href="data:application/pdf;base64,{b64_det}" download="Detail_{c_period}.pdf"><button style="background-color:#6c757d;">📑 TÉLÉCHARGER LE DÉTAIL</button></a>', unsafe_allow_html=True)
+                if c_pay:
+                    opts_pay = sorted(df_step1[c_pay].astype(str).unique().tolist())
+                    sel_pay = f3.multiselect("Paiement", opts_pay, key="f_pay")
+                    if sel_pay: df_step1 = df_step1[df_step1[c_pay].isin(sel_pay)]
 
-    except Exception as e:
-        st.error(f"Erreur : {e}")
+            # --- C. MAPPING (5 COLONNES) ---
+            st.markdown("---")
+            st.subheader("🔗 Validation Colonnes")
+            st.caption("La colonne 'Commission' a été retirée (calcul automatique à l'étape suivante).")
+            
+            cols = df.columns.tolist()
+            
+            # Auto-Detection
+            idx_d = next((i for i, c in enumerate(cols) if 'day' in c.lower() or 'date' in c.lower()), 0)
+            idx_i = next((i for i, c in enumerate(cols) if 'id' in c.lower() and 'order' in c.lower()), 0)
+            idx_r = next((i for i, c in enumerate(cols) if 'restaurant name' in c.lower()), 0)
+            idx_s = next((i for i, c in enumerate(cols) if 'status' in c.lower()), 0)
+            
+            # Priorité à 'item total' pour Total Food
+            idx_f = next((i for i, c in enumerate(cols) if 'item total' in c.lower()), 0)
+            if idx_f == 0: idx_f = next((i for i, c in enumerate(cols) if 'total' in c.lower()), 0)
+
+            # Ligne 1 : Infos Commande
+            m1, m2, m3 = st.columns(3)
+            src_day = m1.selectbox("1. order day", cols, index=idx_d, key="sel_day")
+            src_id = m2.selectbox("2. order id", cols, index=idx_i, key="sel_id")
+            src_res = m3.selectbox("3. restaurant name", cols, index=idx_r, key="sel_res")
+            
+            # Ligne 2 : Statut & Montant
+            m4, m5 = st.columns(2)
+            src_stat = m4.selectbox("4. status", cols, index=idx_s, key="sel_stat")
+            src_food = m5.selectbox("5. Total Food (Source: item total)", cols, index=idx_f, key="sel_food")
+
+            # Construction DataFrame Final (5 Colonnes)
+            df_final = pd.DataFrame()
+            df_final['order day'] = df_step1[src_day]
+            df_final['order id'] = df_step1[src_id]
+            df_final['restaurant name'] = df_step1[src_res]
+            df_final['status'] = df_step1[src_stat]
+            df_final['Total Food'] = df_step1[src_food]
+
+            # D. KPI & EXPORT
+            st.markdown("### 📊 Résumé")
+            
+            def clean_money(s): return pd.to_numeric(s.astype(str).str.replace(r'[^\d.]', '', regex=True), errors='coerce').fillna(0)
+            
+            tot_food = clean_money(df_final['Total Food']).sum()
+
+            k1, k2 = st.columns(2)
+            k1.metric("Commandes Filtrées", len(df_final))
+            k2.metric("Total Food (Est.)", f"{tot_food:,.2f} MAD")
+
+            st.dataframe(df_final.head(50), use_container_width=True, height=250)
+            
+            csv = df_final.to_csv(index=False).encode('utf-8')
+            
+            if len(sel_partners) == 1: fname = f"Detail_{sel_partners[0].strip().replace(' ','_')}.csv"
+            elif search_txt: fname = f"Detail_Groupe_{search_txt}.csv"
+            else: fname = "Detail_Commandes_Yassir.csv"
+
+            st.download_button(
+                "📥 Télécharger CSV (Prêt pour Facturation)", 
+                csv, fname, "text/csv", 
+                type="primary", use_container_width=True
+            )
+            
+        else:
+            st.info("👈 Veuillez sélectionner au moins un magasin.")
+            
+    else:
+        st.error("Colonne 'restaurant name' introuvable.")
+
 else:
-    st.info("Attente du fichier...")
+    st.info("👋 Veuillez uploader un fichier pour commencer.")
