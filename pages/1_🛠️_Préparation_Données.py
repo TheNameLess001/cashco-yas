@@ -9,12 +9,20 @@ LOGO_PATH = "logo.png"
 
 st.set_page_config(page_title="Préparation Données", page_icon="🛠️", layout="wide")
 
-# --- CSS STYLE ---
+# --- STYLE CSS UNIFIÉ ---
 st.markdown(f"""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap');
     html, body, [class*="css"] {{ font-family: 'Poppins', sans-serif; }}
+    
+    .stApp {{ background-color: #F8F9FA; }}
     h1, h2, h3 {{ color: {YASSIR_PURPLE} !important; }}
+    
+    /* SIDEBAR BLANCHE FORCEE */
+    section[data-testid="stSidebar"] {{
+        background-color: #FFFFFF !important;
+        border-right: 2px solid {YASSIR_PURPLE};
+    }}
     
     .stButton>button {{
         background-color: {YASSIR_PURPLE}; color: white; border-radius: 12px;
@@ -35,7 +43,7 @@ st.markdown(f"""
     </style>
 """, unsafe_allow_html=True)
 
-# --- LOGO ---
+# --- LOGO MENU ---
 if os.path.exists(LOGO_PATH):
     st.sidebar.image(LOGO_PATH, width=160)
     st.sidebar.markdown("---")
@@ -58,7 +66,7 @@ def process_file_upload(uploaded_file):
         except Exception as e:
             st.error(f"Erreur : {e}")
 
-# --- PAGE ---
+# --- CONTENU ---
 st.title("🛠️ Préparation & Filtrage")
 uploaded_file = st.file_uploader("📂 Fichier Admin Earnings (CSV)", type=['csv'])
 process_file_upload(uploaded_file)
@@ -115,7 +123,7 @@ if st.session_state['global_df'] is not None:
                     slp = f3.multiselect("Paiement", opp, key="fp")
                     if slp: df_step1 = df_step1[df_step1[c_p].isin(slp)]
 
-            # MAPPING (CORRECTION: Item Total -> Total Food)
+            # MAPPING
             st.markdown("---")
             st.subheader("🔗 Validation Colonnes")
             cols = df.columns.tolist()
@@ -123,7 +131,6 @@ if st.session_state['global_df'] is not None:
             id_i = next((i for i,c in enumerate(cols) if 'id' in c.lower() and 'order' in c.lower()), 0)
             id_r = next((i for i,c in enumerate(cols) if 'restaurant name' in c.lower()), 0)
             id_s = next((i for i,c in enumerate(cols) if 'status' in c.lower()), 0)
-            # Priorité Item Total
             id_f = next((i for i,c in enumerate(cols) if 'item total' in c.lower()), 0)
             if id_f == 0: id_f = next((i for i,c in enumerate(cols) if 'total' in c.lower()), 0)
 
@@ -133,7 +140,7 @@ if st.session_state['global_df'] is not None:
             s_r = m3.selectbox("3. Nom Resto", cols, index=id_r)
             m4, m5 = st.columns(2)
             s_s = m4.selectbox("4. Statut", cols, index=id_s)
-            s_f = m5.selectbox("5. Total Food (Source: item total)", cols, index=id_f)
+            s_f = m5.selectbox("5. Total Food (item total)", cols, index=id_f)
 
             df_fin = pd.DataFrame({
                 'order day': df_step1[s_d], 'order id': df_step1[s_i],
