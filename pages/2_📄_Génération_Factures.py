@@ -4,6 +4,8 @@ from fpdf import FPDF
 import base64
 from datetime import datetime
 import os
+import zipfile
+import io
 
 # --- CONFIG ---
 YASSIR_PURPLE = "#6f42c1"
@@ -42,15 +44,18 @@ if os.path.exists(LOGO_PATH):
     st.sidebar.image(LOGO_PATH, width=160)
     st.sidebar.markdown("---")
 
-# --- MOTEUR PDF (CORRIGÉ) ---
+# --- MOTEUR PDF ---
 def hex_to_rgb(hex_code): 
     return tuple(int(hex_code.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
 
 def safe_text(text):
     """Nettoie le texte pour éviter les erreurs Unicode (remplace les inconnus par ?)"""
     if text is None: return ""
-    # Convertit en string, force l'encodage Latin-1, remplace les erreurs
     return str(text).encode('latin-1', 'replace').decode('latin-1')
+
+def clean_filename(name):
+    """Nettoie le nom du fichier pour le ZIP"""
+    return "".join([c for c in str(name) if c.isalnum() or c in (' ', '-', '_')]).strip()
 
 class PDFTemplate(FPDF):
     def header(self):
@@ -102,7 +107,7 @@ def generate_invoice_pdf(c_data, totals):
     pdf.set_x(110)
     pdf.set_font('Arial', 'B', 10)
     pdf.set_text_color(0)
-    pdf.cell(90, 6, f"N: {safe_text(c_data['ref'])}", 0, 1, 'R') # Safe text
+    pdf.cell(90, 6, f"N: {safe_text(c_data['ref'])}", 0, 1, 'R')
     
     pdf.set_x(110)
     pdf.set_font('Arial', '', 10)
@@ -119,22 +124,22 @@ def generate_invoice_pdf(c_data, totals):
     pdf.set_xy(16, sy+4)
     pdf.set_font('Arial', 'B', 10)
     pdf.set_text_color(0)
-    pdf.cell(80, 5, safe_text(c_data['name']), 0, 1, 'L') # Safe text
+    pdf.cell(80, 5, safe_text(c_data['name']), 0, 1, 'L')
     
     pdf.set_xy(16, sy+10)
     pdf.set_font('Arial', '', 9)
     pdf.set_text_color(60)
-    pdf.cell(80, 5, safe_text(c_data['address'][:45]), 0, 1, 'L') # Safe text
+    pdf.cell(80, 5, safe_text(c_data['address'][:45]), 0, 1, 'L')
     
     pdf.set_xy(16, sy+15)
-    pdf.cell(80, 5, safe_text(c_data['city']), 0, 1, 'L') # Safe text
+    pdf.cell(80, 5, safe_text(c_data['city']), 0, 1, 'L')
     
     pdf.set_xy(16, sy+20)
-    pdf.cell(80, 5, f"ICE: {safe_text(c_data['ice'])}", 0, 1, 'L') # Safe text
+    pdf.cell(80, 5, f"ICE: {safe_text(c_data['ice'])}", 0, 1, 'L')
     
     if c_data['rc']: 
         pdf.set_xy(16, sy+25)
-        pdf.cell(80, 5, f"RC: {safe_text(c_data['rc'])}", 0, 1, 'L') # Safe text
+        pdf.cell(80, 5, f"RC: {safe_text(c_data['rc'])}", 0, 1, 'L')
     
     # Tableau Headers
     pdf.set_y(100)
@@ -144,7 +149,7 @@ def generate_invoice_pdf(c_data, totals):
     pdf.set_font('Arial', 'B', 9)
     
     cols = [60, 40, 40, 50]
-    hd = ['Periode', 'Ventes TTC (Food)', 'Taux Comm.', 'Commission HT'] # Période sans accent pour sécurité
+    hd = ['Periode', 'Ventes TTC (Food)', 'Taux Comm.', 'Commission HT']
     for i,h in enumerate(hd): 
         pdf.cell(cols[i], 10, safe_text(h), 1, 0, 'C', 1)
     
@@ -179,7 +184,7 @@ def generate_invoice_pdf(c_data, totals):
     aline("TVA 20%", totals['tva'])
     aline("Total Facture TTC", totals['inv_ttc'], True)
     pdf.ln(2)
-    aline("NET A PAYER PARTENAIRE", totals['net_pay'], True, True) # Pas d'accent sur A
+    aline("NET A PAYER PARTENAIRE", totals['net_pay'], True, True)
     
     pdf.set_y(165)
     pdf.set_font('Arial', 'I', 8)
@@ -187,7 +192,6 @@ def generate_invoice_pdf(c_data, totals):
     pdf.cell(0, 5, f"Arrete la presente facture a la somme de : {totals['inv_ttc']:,.2f} Dirhams (TTC)", 0, 1, 'L')
     pdf.cell(0, 5, "Mode de reglement : Virement bancaire sous 30 jours", 0, 1, 'L')
     
-    # ENCODAGE SECURISE ICI
     return pdf.output(dest='S').encode('latin-1', errors='replace')
 
 def generate_detail_pdf(c_data, df):
@@ -226,13 +230,11 @@ def generate_detail_pdf(c_data, df):
             m_str = "0.00"
             
         pdf.set_x(xs)
-        # Utilisation de safe_text sur les données dynamiques
         pdf.cell(cw[0], 6, safe_text(str(row.get('order day','-'))[:10]), 1, 0, 'C')
         pdf.cell(cw[1], 6, safe_text(str(row.get('order id','-'))), 1, 0, 'C')
         pdf.cell(cw[2], 6, m_str, 1, 0, 'R')
         pdf.cell(cw[3], 6, safe_text(str(row.get('status','-'))), 1, 1, 'C')
         
-    # ENCODAGE SECURISE ICI AUSSI
     return pdf.output(dest='S').encode('latin-1', errors='replace')
 
 # --- UI ---
@@ -253,7 +255,7 @@ if uploaded_file:
         st.error(f"Erreur de lecture CSV: {e}")
 
 st.sidebar.markdown("### ⚙️ Infos Partenaire")
-c_name = st.sidebar.text_input("Nom", value=def_name)
+c_name = st.sidebar.text_input("Nom Global", value=def_name)
 c_addr = st.sidebar.text_input("Adresse", "Adresse du restaurant...")
 c_city = st.sidebar.text_input("Ville", "CASABLANCA")
 c_ice = st.sidebar.text_input("ICE", "Ex: 00123...")
@@ -266,10 +268,11 @@ c_rate = st.sidebar.number_input("Taux %", value=15.0, step=0.5)
 
 if df is not None:
     if 'Total Food' in df.columns:
-        # Nettoyage des données
+        # Nettoyage des données pour le global
         clean_sales = df['Total Food'].astype(str).str.replace(r'[^\d.]', '', regex=True)
         df['calc'] = pd.to_numeric(clean_sales, errors='coerce').fillna(0)
         
+        # --- CALCULS GLOBAUX ---
         sales = df['calc'].sum()
         comm = sales * (c_rate/100)
         tva = comm*0.20
@@ -283,6 +286,7 @@ if df is not None:
             'ref': c_ref, 'rate': c_rate
         }
 
+        # --- AFFICHAGE GLOBAL ---
         st.markdown("---")
         k1, k2, k3, k4 = st.columns(4)
         k1.metric("Ventes (Food)", f"{sales:,.2f} DH")
@@ -290,16 +294,16 @@ if df is not None:
         k3.metric("TTC Yassir", f"{ttc:,.2f} DH")
         k4.metric("Net", f"{net:,.2f} DH", delta="Final")
 
-        st.markdown("### 🖨️ Téléchargements")
+        st.markdown("### 🖨️ Téléchargements (Global)")
         c1, c2 = st.columns(2)
         
-        # Génération des PDFs avec gestion d'erreur sécurisée
+        # Boutons Globaux
         try:
             b1 = base64.b64encode(generate_invoice_pdf(c_data, totals)).decode()
             c1.markdown(f'''
-                <a href="data:application/pdf;base64,{b1}" download="Facture_{c_ref}.pdf">
+                <a href="data:application/pdf;base64,{b1}" download="Facture_Globale_{c_ref}.pdf">
                     <button style="background-color:{YASSIR_PURPLE}; color:white; border:none; padding:12px 20px; border-radius:10px; width:100%; font-weight:bold; cursor:pointer;">
-                    📥 TÉLÉCHARGER FACTURE
+                    📥 FACTURE GLOBALE
                     </button>
                 </a>
             ''', unsafe_allow_html=True)
@@ -309,14 +313,78 @@ if df is not None:
         try:
             b2 = base64.b64encode(generate_detail_pdf(c_data, df)).decode()
             c2.markdown(f'''
-                <a href="data:application/pdf;base64,{b2}" download="Detail.pdf">
+                <a href="data:application/pdf;base64,{b2}" download="Detail_Global.pdf">
                     <button style="background-color:#6c757d; color:white; border:none; padding:12px 20px; border-radius:10px; width:100%; font-weight:bold; cursor:pointer;">
-                    📑 TÉLÉCHARGER DÉTAIL
+                    📑 DÉTAIL GLOBAL
                     </button>
                 </a>
             ''', unsafe_allow_html=True)
         except Exception as e:
             c2.error(f"Erreur PDF Détail: {e}")
+            
+        # ---------------------------------------------------------
+        # --- NOUVELLE SECTION : EXPORT PAR POINT DE VENTE (ZIP) ---
+        # ---------------------------------------------------------
+        
+        if 'restaurant name' in df.columns:
+            st.markdown("---")
+            st.subheader("📦 Export Multi-Points de Vente (ZIP)")
+            st.info("Cette option génère un fichier ZIP contenant une facture et un détail pour **chaque** restaurant détecté dans le fichier.")
+            
+            # Utilisation de la session_state pour éviter de recalculer le zip à chaque interaction mineure
+            if st.button("🚀 GÉNÉRER LE ZIP (Factures + Détails)"):
+                
+                with st.spinner("Génération des fichiers en cours..."):
+                    zip_buffer = io.BytesIO()
+                    
+                    with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
+                        # Grouper par restaurant
+                        grouped = df.groupby('restaurant name')
+                        
+                        count = 0
+                        for name, group_df in grouped:
+                            safe_name = clean_filename(name)
+                            if not safe_name: safe_name = f"Store_{count}"
+                            
+                            # Recalculer les totaux pour ce sous-groupe
+                            g_sales = group_df['calc'].sum()
+                            g_comm = g_sales * (c_rate/100)
+                            g_tva = g_comm * 0.20
+                            g_ttc = g_comm + g_tva
+                            g_net = g_sales - g_ttc
+                            
+                            g_totals = {'sales': g_sales, 'comm_ht': g_comm, 'tva': g_tva, 'inv_ttc': g_ttc, 'net_pay': g_net}
+                            
+                            # Copier les infos partenaires mais changer le nom par celui du restaurant spécifique
+                            g_data = c_data.copy()
+                            g_data['name'] = str(name) # Nom spécifique du point de vente
+                            
+                            try:
+                                # 1. Générer Facture PDF
+                                pdf_inv_bytes = generate_invoice_pdf(g_data, g_totals)
+                                zip_file.writestr(f"Facture_{safe_name}.pdf", pdf_inv_bytes)
+                                
+                                # 2. Générer Détail PDF
+                                pdf_det_bytes = generate_detail_pdf(g_data, group_df)
+                                zip_file.writestr(f"Detail_{safe_name}.pdf", pdf_det_bytes)
+                                
+                                count += 1
+                            except Exception as e:
+                                st.warning(f"Erreur sur {safe_name}: {e}")
+                                
+                    # Préparer le téléchargement du ZIP
+                    b_zip = base64.b64encode(zip_buffer.getvalue()).decode()
+                    filename_zip = f"Batch_Factures_{datetime.now().strftime('%Y%m%d')}.zip"
+                    
+                    st.success(f"✅ Terminé ! {count} points de ventes traités.")
+                    
+                    st.markdown(f'''
+                        <a href="data:application/zip;base64,{b_zip}" download="{filename_zip}">
+                            <button style="background-color:#28a745; color:white; border:none; padding:15px 25px; border-radius:10px; width:100%; font-size:16px; font-weight:bold; cursor:pointer;">
+                            📦 TÉLÉCHARGER LE DOSSIER ZIP COMPLET
+                            </button>
+                        </a>
+                    ''', unsafe_allow_html=True)
 
     else: 
         st.error("❌ Colonne 'Total Food' manquante.")
