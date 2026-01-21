@@ -1,0 +1,400 @@
+import streamlit as st
+import pandas as pd
+from fpdf import FPDF
+import base64
+from datetime import datetime
+import os
+import zipfile
+import io
+
+# --- CONFIG ---
+YASSIR_PURPLE = "#6f42c1"
+LOGO_PATH = "logo.png"
+
+st.set_page_config(page_title="Génération Factures - Yassir Alger", page_icon="📄", layout="wide")
+
+# --- STYLE CSS (GLOBAL) ---
+st.markdown(f"""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap');
+    html, body, [class*="css"] {{ font-family: 'Poppins', sans-serif; }}
+    
+    .stApp {{ background-color: #F8F9FA; }}
+    h1, h2, h3 {{ color: {YASSIR_PURPLE} !important; }}
+    
+    /* SIDEBAR BLANCHE */
+    section[data-testid="stSidebar"] {{
+        background-color: #FFFFFF !important;
+        border-right: 2px solid {YASSIR_PURPLE};
+    }}
+    
+    /* KPI CARDS */
+    div[data-testid="metric-container"] {{
+        background-color: white; 
+        border-left: 5px solid {YASSIR_PURPLE};
+        border-radius: 8px;
+        padding: 15px; 
+        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+    }}
+    </style>
+""", unsafe_allow_html=True)
+
+# --- LOGO MENU ---
+if os.path.exists(LOGO_PATH):
+    st.sidebar.image(LOGO_PATH, width=160)
+    st.sidebar.markdown("---")
+
+# --- MOTEUR PDF ---
+def hex_to_rgb(hex_code): 
+    return tuple(int(hex_code.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
+
+def safe_text(text):
+    """Nettoie le texte pour éviter les erreurs Unicode"""
+    if text is None: return ""
+    return str(text).encode('latin-1', 'replace').decode('latin-1')
+
+def clean_filename(name):
+    """Nettoie le nom du fichier pour le ZIP"""
+    return "".join([c for c in str(name) if c.isalnum() or c in (' ', '-', '_')]).strip()
+
+class PDFTemplate(FPDF):
+    def header(self):
+        if os.path.exists(LOGO_PATH): 
+            self.image(LOGO_PATH, 10, 8, 30)
+        else:
+            self.set_font('Arial', 'B', 24)
+            r,g,b = hex_to_rgb(YASSIR_PURPLE)
+            self.set_text_color(r,g,b)
+            self.cell(50, 15, 'Yassir', 0, 0, 'L')
+            
+        self.set_xy(10, 28)
+        self.set_font('Arial', 'B', 9)
+        self.set_text_color(0)
+        self.cell(0, 4, 'YASSIR ALGER', 0, 1, 'L')
+        
+        self.set_font('Arial', '', 8)
+        self.set_text_color(80)
+        # Mise à jour adresse et infos légales Algérie
+        self.cell(0, 4, "Micro zone d'activite Said Hamdine, Lot n11", 0, 1, 'L')
+        self.cell(0, 4, "Bir Mourad Rais, Alger, Algerie", 0, 1, 'L')
+        self.cell(0, 4, 'NIF: 001716099948978 - RC: 17B 8994990-00/16', 0, 1, 'L')
+        self.cell(0, 4, 'NIS: 001716010111763', 0, 1, 'L')
+        self.ln(5)
+
+    def footer(self):
+        self.set_y(-25)
+        self.set_font('Arial', '', 7)
+        self.set_text_color(120)
+        # Footer Algérie
+        footer_text = (
+            "YASSIR ALGER - Micro zone d'activite Said Hamdine, Lot n11, Bir Mourad Rais, Alger\n"
+            "NIF: 001716099948978 - RC: 17B 8994990-00/16 - NIS: 001716010111763"
+        )
+        self.multi_cell(0, 3, footer_text, 0, 'C')
+        
+        self.set_y(-12)
+        r,g,b = hex_to_rgb(YASSIR_PURPLE)
+        self.set_text_color(r,g,b)
+        self.set_font('Arial', 'B', 8)
+        self.cell(0, 10, f'Page {self.page_no()}/{{nb}}', 0, 0, 'R')
+
+def generate_invoice_pdf(c_data, totals):
+    pdf = PDFTemplate()
+    pdf.alias_nb_pages()
+    pdf.add_page()
+    r,g,b = hex_to_rgb(YASSIR_PURPLE)
+    
+    # Titre
+    pdf.set_xy(110, 50)
+    pdf.set_font('Arial', 'B', 14)
+    pdf.set_text_color(r,g,b)
+    pdf.cell(90, 8, "FACTURE COMMISSION", 0, 1, 'R')
+    
+    # Info Facture
+    pdf.set_x(110)
+    pdf.set_font('Arial', 'B', 10)
+    pdf.set_text_color(0)
+    pdf.cell(90, 6, f"N: {safe_text(c_data['ref'])}", 0, 1, 'R')
+    
+    pdf.set_x(110)
+    pdf.set_font('Arial', '', 10)
+    pdf.cell(90, 6, f"Date: {datetime.now().strftime('%d/%m/%Y')}", 0, 1, 'R')
+    
+    # Bloc Destinataire
+    sy = 50
+    pdf.set_fill_color(248, 248, 248)
+    pdf.set_draw_color(220, 220, 220)
+    pdf.rect(10, sy, 90, 35, 'FD')
+    pdf.set_fill_color(r,g,b)
+    pdf.rect(10, sy, 3, 35, 'F')
+    
+    pdf.set_xy(16, sy+4)
+    pdf.set_font('Arial', 'B', 10)
+    pdf.set_text_color(0)
+    pdf.cell(80, 5, safe_text(c_data['name']), 0, 1, 'L')
+    
+    pdf.set_xy(16, sy+10)
+    pdf.set_font('Arial', '', 9)
+    pdf.set_text_color(60)
+    pdf.cell(80, 5, safe_text(c_data['address'][:45]), 0, 1, 'L')
+    
+    pdf.set_xy(16, sy+15)
+    pdf.cell(80, 5, safe_text(c_data['city']), 0, 1, 'L')
+    
+    # Adaptation NIF/RC
+    pdf.set_xy(16, sy+20)
+    pdf.cell(80, 5, f"NIF: {safe_text(c_data['ice'])}", 0, 1, 'L') # Variable ice utilisée pour NIF
+    
+    if c_data['rc']: 
+        pdf.set_xy(16, sy+25)
+        pdf.cell(80, 5, f"RC: {safe_text(c_data['rc'])}", 0, 1, 'L')
+    
+    # Tableau Headers
+    pdf.set_y(100)
+    pdf.set_fill_color(r,g,b)
+    pdf.set_draw_color(r,g,b)
+    pdf.set_text_color(255)
+    pdf.set_font('Arial', 'B', 9)
+    
+    cols = [60, 40, 40, 50]
+    hd = ['Periode', 'Ventes TTC (Food)', 'Taux Comm.', 'Commission HT']
+    for i,h in enumerate(hd): 
+        pdf.cell(cols[i], 10, safe_text(h), 1, 0, 'C', 1)
+    
+    pdf.ln()
+    pdf.set_draw_color(200)
+    pdf.set_text_color(0)
+    pdf.set_font('Arial', '', 9)
+    
+    # Tableau Data
+    pdf.cell(cols[0], 10, safe_text(c_data['period']), 1, 0, 'C')
+    pdf.cell(cols[1], 10, f"{totals['sales']:,.2f}", 1, 0, 'C')
+    pdf.cell(cols[2], 10, f"{c_data['rate']}%", 1, 0, 'C')
+    pdf.cell(cols[3], 10, f"{totals['comm_ht']:,.2f}", 1, 1, 'C')
+    
+    pdf.ln(8)
+    xt = 110
+    
+    def aline(l, v, b=False, bg=False):
+        pdf.set_x(xt)
+        pdf.set_font('Arial', 'B' if b else '', 9)
+        pdf.set_text_color(0)
+        if bg: 
+            pdf.set_fill_color(r,g,b)
+            pdf.set_text_color(255)
+            pdf.cell(50, 9, safe_text(l), 0, 0, 'L', 1)
+            pdf.cell(40, 9, f"{v:,.2f} DZD", 0, 1, 'R', 1) # Devise DZD
+        else: 
+            pdf.cell(50, 7, safe_text(l), 1, 0, 'L')
+            pdf.cell(40, 7, f"{v:,.2f}", 1, 1, 'R')
+        
+    aline("Total Commission HT", totals['comm_ht'])
+    aline("TVA 19%", totals['tva']) # TVA Algérie
+    aline("Total Facture TTC", totals['inv_ttc'], True)
+    pdf.ln(2)
+    aline("NET A PAYER PARTENAIRE", totals['net_pay'], True, True)
+    
+    pdf.set_y(165)
+    pdf.set_font('Arial', 'I', 8)
+    pdf.set_text_color(100)
+    pdf.cell(0, 5, f"Arrete la presente facture a la somme de : {totals['inv_ttc']:,.2f} Dinar Algerien (TTC)", 0, 1, 'L')
+    pdf.cell(0, 5, "Mode de reglement : Virement bancaire sous 30 jours", 0, 1, 'L')
+    
+    return pdf.output(dest='S').encode('latin-1', errors='replace')
+
+def generate_detail_pdf(c_data, df):
+    pdf = PDFTemplate()
+    pdf.alias_nb_pages()
+    pdf.add_page()
+    r,g,b = hex_to_rgb(YASSIR_PURPLE)
+    
+    pdf.set_y(50)
+    pdf.set_font('Arial', 'B', 14)
+    pdf.set_text_color(r,g,b)
+    pdf.cell(0, 10, f"DETAIL COMMANDES - {safe_text(c_data['period'])}", 0, 1, 'C')
+    pdf.ln(5)
+    
+    pdf.set_fill_color(240)
+    pdf.set_draw_color(200)
+    pdf.set_font('Arial', 'B', 8)
+    pdf.set_text_color(0)
+    
+    cw = [40, 60, 40, 50]
+    cn = ['Date', 'ID', 'Montant (DZD)', 'Statut']
+    xs = (210-sum(cw))/2
+    pdf.set_x(xs)
+    
+    for i,c in enumerate(cn): 
+        pdf.cell(cw[i], 8, safe_text(c), 1, 0, 'C', 1)
+    
+    pdf.ln()
+    pdf.set_font('Arial', '', 8)
+    
+    for _,row in df.iterrows():
+        try: 
+            # Nettoyage devise marocaine si présente pour garder le chiffre
+            m_val = float(str(row.get('Total Food', '0')).replace('MAD','').replace('DZD','').replace('DA','').replace(' ','').replace(',','.'))
+            m_str = f"{m_val:,.2f}"
+        except: 
+            m_str = "0.00"
+            
+        pdf.set_x(xs)
+        pdf.cell(cw[0], 6, safe_text(str(row.get('order day','-'))[:10]), 1, 0, 'C')
+        pdf.cell(cw[1], 6, safe_text(str(row.get('order id','-'))), 1, 0, 'C')
+        pdf.cell(cw[2], 6, m_str, 1, 0, 'R')
+        pdf.cell(cw[3], 6, safe_text(str(row.get('status','-'))), 1, 1, 'C')
+        
+    return pdf.output(dest='S').encode('latin-1', errors='replace')
+
+# --- UI ---
+st.title("📄 Édition des Factures (Algérie)")
+st.markdown("Importez le fichier CSV. **Le Nom du partenaire sera détecté automatiquement.**")
+
+uploaded_file = st.file_uploader("📂 Fichier 'Detail_....csv'", type=['csv'])
+
+def_name = "Nom Partenaire"
+df = None
+
+if uploaded_file:
+    try:
+        df = pd.read_csv(uploaded_file, sep=None, engine='python')
+        if 'restaurant name' in df.columns: 
+            def_name = df['restaurant name'].dropna().iloc[0]
+    except Exception as e: 
+        st.error(f"Erreur de lecture CSV: {e}")
+
+st.sidebar.markdown("### ⚙️ Infos Partenaire")
+c_name = st.sidebar.text_input("Nom Global", value=def_name)
+c_addr = st.sidebar.text_input("Adresse", "Adresse du restaurant...")
+c_city = st.sidebar.text_input("Ville", "ALGER")
+c_ice = st.sidebar.text_input("NIF", "Ex: 001716...") # Label adapté
+c_rc = st.sidebar.text_input("RC", "")
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 💰 Conditions")
+c_period = st.sidebar.text_input("Période", "NOVEMBRE 2025")
+c_ref = st.sidebar.text_input("N Facture", f"F-{datetime.now().strftime('%Y%m')}-001")
+c_rate = st.sidebar.number_input("Taux %", value=15.0, step=0.5)
+
+if df is not None:
+    if 'Total Food' in df.columns:
+        # Nettoyage des données pour le global
+        clean_sales = df['Total Food'].astype(str).str.replace(r'[^\d.]', '', regex=True)
+        df['calc'] = pd.to_numeric(clean_sales, errors='coerce').fillna(0)
+        
+        # --- CALCULS GLOBAUX ---
+        sales = df['calc'].sum()
+        comm = sales * (c_rate/100)
+        tva = comm * 0.19 # TVA ALGERIE 19%
+        ttc = comm + tva
+        net = sales - ttc
+        
+        totals = {'sales': sales, 'comm_ht': comm, 'tva': tva, 'inv_ttc': ttc, 'net_pay': net}
+        c_data = {
+            'name': c_name, 'address': c_addr, 'city': c_city, 
+            'ice': c_ice, 'rc': c_rc, 'period': c_period, 
+            'ref': c_ref, 'rate': c_rate
+        }
+
+        # --- AFFICHAGE GLOBAL ---
+        st.markdown("---")
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("Ventes (Food)", f"{sales:,.2f} DZD")
+        k2.metric("Comm HT", f"{comm:,.2f} DZD")
+        k3.metric("TTC Yassir", f"{ttc:,.2f} DZD")
+        k4.metric("Net", f"{net:,.2f} DZD", delta="Final")
+
+        st.markdown("### 🖨️ Téléchargements (Global)")
+        c1, c2 = st.columns(2)
+        
+        # Boutons Globaux
+        try:
+            b1 = base64.b64encode(generate_invoice_pdf(c_data, totals)).decode()
+            c1.markdown(f'''
+                <a href="data:application/pdf;base64,{b1}" download="Facture_Globale_{c_ref}.pdf">
+                    <button style="background-color:{YASSIR_PURPLE}; color:white; border:none; padding:12px 20px; border-radius:10px; width:100%; font-weight:bold; cursor:pointer;">
+                    📥 FACTURE GLOBALE
+                    </button>
+                </a>
+            ''', unsafe_allow_html=True)
+        except Exception as e:
+            c1.error(f"Erreur PDF Facture: {e}")
+
+        try:
+            b2 = base64.b64encode(generate_detail_pdf(c_data, df)).decode()
+            c2.markdown(f'''
+                <a href="data:application/pdf;base64,{b2}" download="Detail_Global.pdf">
+                    <button style="background-color:#6c757d; color:white; border:none; padding:12px 20px; border-radius:10px; width:100%; font-weight:bold; cursor:pointer;">
+                    📑 DÉTAIL GLOBAL
+                    </button>
+                </a>
+            ''', unsafe_allow_html=True)
+        except Exception as e:
+            c2.error(f"Erreur PDF Détail: {e}")
+            
+        # ---------------------------------------------------------
+        # --- EXPORT PAR POINT DE VENTE (ZIP) ---
+        # ---------------------------------------------------------
+        
+        if 'restaurant name' in df.columns:
+            st.markdown("---")
+            st.subheader("📦 Export Multi-Points de Vente (ZIP)")
+            st.info("Cette option génère un fichier ZIP contenant une facture et un détail pour **chaque** restaurant détecté dans le fichier.")
+            
+            if st.button("🚀 GÉNÉRER LE ZIP (Factures + Détails)"):
+                
+                with st.spinner("Génération des fichiers en cours..."):
+                    zip_buffer = io.BytesIO()
+                    
+                    with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
+                        # Grouper par restaurant
+                        grouped = df.groupby('restaurant name')
+                        
+                        count = 0
+                        for name, group_df in grouped:
+                            safe_name = clean_filename(name)
+                            if not safe_name: safe_name = f"Store_{count}"
+                            
+                            # Recalculer les totaux pour ce sous-groupe
+                            g_sales = group_df['calc'].sum()
+                            g_comm = g_sales * (c_rate/100)
+                            g_tva = g_comm * 0.19 # TVA 19%
+                            g_ttc = g_comm + g_tva
+                            g_net = g_sales - g_ttc
+                            
+                            g_totals = {'sales': g_sales, 'comm_ht': g_comm, 'tva': g_tva, 'inv_ttc': g_ttc, 'net_pay': g_net}
+                            
+                            # Copier les infos partenaires mais changer le nom par celui du restaurant spécifique
+                            g_data = c_data.copy()
+                            g_data['name'] = str(name) # Nom spécifique du point de vente
+                            
+                            try:
+                                # 1. Générer Facture PDF
+                                pdf_inv_bytes = generate_invoice_pdf(g_data, g_totals)
+                                zip_file.writestr(f"Facture_{safe_name}.pdf", pdf_inv_bytes)
+                                
+                                # 2. Générer Détail PDF
+                                pdf_det_bytes = generate_detail_pdf(g_data, group_df)
+                                zip_file.writestr(f"Detail_{safe_name}.pdf", pdf_det_bytes)
+                                
+                                count += 1
+                            except Exception as e:
+                                st.warning(f"Erreur sur {safe_name}: {e}")
+                                
+                    # Préparer le téléchargement du ZIP
+                    b_zip = base64.b64encode(zip_buffer.getvalue()).decode()
+                    filename_zip = f"Batch_Factures_Alger_{datetime.now().strftime('%Y%m%d')}.zip"
+                    
+                    st.success(f"✅ Terminé ! {count} points de ventes traités.")
+                    
+                    st.markdown(f'''
+                        <a href="data:application/zip;base64,{b_zip}" download="{filename_zip}">
+                            <button style="background-color:#28a745; color:white; border:none; padding:15px 25px; border-radius:10px; width:100%; font-size:16px; font-weight:bold; cursor:pointer;">
+                            📦 TÉLÉCHARGER LE DOSSIER ZIP COMPLET
+                            </button>
+                        </a>
+                    ''', unsafe_allow_html=True)
+
+    else: 
+        st.error("❌ Colonne 'Total Food' manquante.")
+else:
+    st.info("Attente du fichier...")
