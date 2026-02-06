@@ -144,9 +144,19 @@ def generate_invoice_pdf(row_data, totals):
     pdf.set_font('Arial', '', 9)
     
     # Tableau Data
-    # Récupération des valeurs du row_data
     period_val = str(row_data.get('Période', ''))
-    rate_val = str(row_data.get('Taux de commission', '0')).replace('%','')
+    # Récupération du taux : priorité à la colonne Excel, sinon valeur par défaut
+    raw_rate = row_data.get('Taux de commission', '0')
+    try:
+        if pd.isna(raw_rate):
+            rate_val = "0"
+        else:
+            # Gestion des formats "0.15", "15", "15%"
+            rate_float = float(str(raw_rate).replace('%', ''))
+            if rate_float < 1: rate_float *= 100
+            rate_val = f"{rate_float:g}"
+    except:
+        rate_val = "0"
     
     pdf.cell(cols[0], 10, safe_text(period_val), 1, 0, 'C')
     pdf.cell(cols[1], 10, f"{totals['sales']:,.2f}", 1, 0, 'C')
@@ -180,7 +190,6 @@ def generate_invoice_pdf(row_data, totals):
     pdf.set_text_color(100)
     pdf.cell(0, 5, f"Arrete la presente facture a la somme de : {totals['inv_ttc']:,.2f} Dirhams (TTC)", 0, 1, 'L')
     
-    # Info RIB si dispo
     rib = str(row_data.get('RIB', ''))
     if len(rib) > 5:
         pdf.ln(5)
@@ -197,9 +206,10 @@ uploaded_file = st.file_uploader("📂 Charger le fichier Excel (xlsx)", type=['
 
 if uploaded_file:
     try:
-        df = pd.read_excel(uploaded_file)
+        # CORRECTION : header=10 signifie que la ligne 11 est l'en-tête (index 0 à 10)
+        df = pd.read_excel(uploaded_file, header=10)
         
-        # Nettoyage des noms de colonnes (supprime les espaces avant/après)
+        # Nettoyage des noms de colonnes
         df.columns = df.columns.str.strip()
         
         # Vérification des colonnes critiques
@@ -207,20 +217,18 @@ if uploaded_file:
         missing = [c for c in required_cols if c not in df.columns]
         
         if missing:
-            st.error(f"❌ Colonnes manquantes dans le fichier : {', '.join(missing)}")
+            st.error(f"❌ Colonnes manquantes malgré le changement de ligne : {', '.join(missing)}")
+            st.write("Colonnes détectées :", list(df.columns))
         else:
-            # 1. FILTRAGE : On garde uniquement les lignes où 'Facture N°' est vide ou NaN
+            # 1. FILTRAGE
             df_to_process = df[df['Facture N°'].isna() | (df['Facture N°'].astype(str).str.strip() == '')].copy()
             
             if df_to_process.empty:
                 st.warning("⚠️ Aucune ligne à traiter (toutes les lignes ont déjà un N° de Facture).")
             else:
                 st.success(f"✅ {len(df_to_process)} factures à générer détectées.")
-                
-                # Prévisualisation
-                st.dataframe(df_to_process[['Restaurant name', 'Commission YASSIR', 'Période']].head())
+                st.dataframe(df_to_process[['Restaurant name', 'Commission YASSIR']].head())
 
-                # Configuration Facture
                 st.sidebar.subheader("🔢 Numérotation")
                 inv_prefix = st.sidebar.text_input("Préfixe", f"F-{datetime.now().strftime('%Y%m')}")
                 start_idx = st.sidebar.number_input("Index de départ", value=1, step=1)
@@ -236,35 +244,24 @@ if uploaded_file:
                         count = 0
                         for index, row in df_to_process.iterrows():
                             try:
-                                # --- CALCULS FINANCIERS ---
-                                # On se base sur la colonne 'Commission YASSIR' comme demandé
+                                # Calculs
                                 sales = clean_currency(row.get('Item total', 0))
                                 comm_ht = clean_currency(row.get('Commission YASSIR', 0))
                                 
-                                # Calcul automatique HT, TVA, TTC
                                 tva = comm_ht * 0.20
                                 ttc = comm_ht + tva
-                                
-                                # Le Net à payer au partenaire = Ventes - Commission TTC
-                                # (Sauf si la colonne 'Reste à payer' est préférée, mais le calcul assure la cohérence)
                                 net_pay = sales - ttc 
                                 
-                                totals = {
-                                    'sales': sales,
-                                    'comm_ht': comm_ht,
-                                    'tva': tva,
-                                    'inv_ttc': ttc,
-                                    'net_pay': net_pay
-                                }
+                                totals = {'sales': sales, 'comm_ht': comm_ht, 'tva': tva, 'inv_ttc': ttc, 'net_pay': net_pay}
                                 
-                                # Génération Référence Facture
+                                # Référence
                                 current_ref = f"{inv_prefix}-{str(start_idx + count).zfill(3)}"
-                                row['ref'] = current_ref # On ajoute la ref temporairement à la ligne pour le PDF
+                                row['ref'] = current_ref
                                 
-                                # Création PDF
+                                # PDF
                                 pdf_bytes = generate_invoice_pdf(row, totals)
                                 
-                                # Nom du fichier
+                                # Nom fichier
                                 safe_name = clean_filename(row.get('Restaurant name', f'Client_{index}'))
                                 filename = f"{current_ref}_{safe_name}.pdf"
                                 
@@ -273,22 +270,21 @@ if uploaded_file:
                                 my_bar.progress(int((count / len(df_to_process)) * 100))
                                 
                             except Exception as e:
-                                st.error(f"Erreur ligne {index} ({row.get('Restaurant name')}): {e}")
+                                st.error(f"Erreur ligne {index}: {e}")
 
                     my_bar.empty()
                     st.success(f"🎉 Terminé ! {count} factures générées.")
                     
-                    # Bouton Téléchargement
                     b_zip = base64.b64encode(zip_buffer.getvalue()).decode()
                     file_name_zip = f"Factures_Batch_{datetime.now().strftime('%Y%m%d_%H%M')}.zip"
                     
                     st.markdown(f'''
                         <a href="data:application/zip;base64,{b_zip}" download="{file_name_zip}">
-                            <button style="background-color:#28a745; color:white; border:none; padding:15px 25px; border-radius:8px; width:100%; font-size:16px; font-weight:bold; cursor:pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+                            <button style="background-color:#28a745; color:white; border:none; padding:15px 25px; border-radius:8px; width:100%; font-size:16px; font-weight:bold; cursor:pointer;">
                             📦 TÉLÉCHARGER TOUTES LES FACTURES (.ZIP)
                             </button>
                         </a>
                     ''', unsafe_allow_html=True)
 
     except Exception as e:
-        st.error(f"Erreur de lecture du fichier : {e}")
+        st.error(f"Erreur: {e}")
