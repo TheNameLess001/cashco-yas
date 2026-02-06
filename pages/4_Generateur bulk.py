@@ -292,4 +292,73 @@ if uploaded_file:
                                 tva = comm_ht * 0.20
                                 ttc = comm_ht + tva
                                 
-                                # Ancien Net =
+                                # Ancien Net = Sales - TTC
+                                net_pay_initial = sales - ttc
+                                
+                                # NOUVEAU NET = Ancien Net + TVA (Formule demandée)
+                                net_pay_final = net_pay_initial + tva
+                                
+                                totals = {
+                                    'sales': sales, 
+                                    'comm_ht': comm_ht, 
+                                    'tva': tva, 
+                                    'inv_ttc': ttc, 
+                                    'net_pay': net_pay_final
+                                }
+                                
+                                # 2. DATE FACTURE
+                                invoice_date = extract_end_date(row.get('Période', ''))
+                                
+                                # 3. REFERENCE
+                                current_seq = start_idx + count
+                                current_ref = f"{current_seq}-{date_suffix}YAS"
+                                
+                                df.at[index, 'Facture N°'] = current_ref
+                                row['ref'] = current_ref
+                                
+                                # 4. PDF
+                                pdf_bytes = generate_invoice_pdf(row, totals, invoice_date)
+                                safe_name = clean_filename(row.get('Restaurant name', f'Client_{index}'))
+                                filename = f"{current_ref}_{safe_name}.pdf"
+                                
+                                zip_file.writestr(filename, pdf_bytes)
+                                count += 1
+                                my_bar.progress(int((count / len(df_to_process)) * 100))
+                                
+                            except Exception as e:
+                                st.error(f"Erreur ligne {index}: {e}")
+
+                    my_bar.empty()
+                    st.success(f"🎉 Terminé ! {count} factures générées.")
+                    
+                    st.markdown("---")
+                    col_zip, col_xls = st.columns(2)
+                    
+                    # ZIP DOWNLOAD
+                    b_zip = base64.b64encode(zip_buffer.getvalue()).decode()
+                    file_name_zip = f"Factures_{datetime.now().strftime('%Y%m%d')}.zip"
+                    col_zip.markdown(f'''
+                        <a href="data:application/zip;base64,{b_zip}" download="{file_name_zip}">
+                            <button style="background-color:{YASSIR_PURPLE}; color:white; border:none; padding:15px; border-radius:10px; width:100%; font-weight:bold; cursor:pointer;">
+                            📦 TÉLÉCHARGER ZIP
+                            </button>
+                        </a>
+                    ''', unsafe_allow_html=True)
+                    
+                    # EXCEL DOWNLOAD
+                    excel_buffer = io.BytesIO()
+                    with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+                        df.to_excel(writer, index=False, sheet_name='Suivi_Facturation')
+                        
+                    b_xls = base64.b64encode(excel_buffer.getvalue()).decode()
+                    file_name_xls = f"Suivi_Mis_a_Jour_{datetime.now().strftime('%Y%m%d')}.xlsx"
+                    col_xls.markdown(f'''
+                        <a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b_xls}" download="{file_name_xls}">
+                            <button style="background-color:#28a745; color:white; border:none; padding:15px; border-radius:10px; width:100%; font-weight:bold; cursor:pointer;">
+                            📊 TÉLÉCHARGER EXCEL
+                            </button>
+                        </a>
+                    ''', unsafe_allow_html=True)
+
+    except Exception as e:
+        st.error(f"Erreur critique: {e}")
