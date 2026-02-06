@@ -55,38 +55,26 @@ def clean_currency(value):
     except:
         return 0.0
 
-def extract_end_date(period_str):
+def format_date_virement(date_val):
     """
-    Gère le format '01/04 au 15/04'.
-    Récupère la date de fin et ajoute l'année en cours si manquante.
+    Formate la date du virement en JJ/MM/AAAA.
+    Gère les formats datetime Excel et les chaines de caractères.
     """
-    text = str(period_str).strip().lower()
+    if pd.isna(date_val) or str(date_val).strip() == "":
+        return datetime.now().strftime('%d/%m/%Y') # Par défaut aujourd'hui si vide
     
-    # 1. On sépare sur " au ", " - " ou " to "
-    # On remplace tout par un séparateur unique
-    text = text.replace(' au ', '|').replace(' - ', '|').replace(' to ', '|')
-    
-    if '|' in text:
-        # On prend la partie droite (fin de période)
-        end_part = text.split('|')[-1].strip()
-    else:
-        # Si pas de séparateur, on prend tout le texte (date unique ?)
-        end_part = text
-
-    # 2. Nettoyage (enlève espaces)
-    end_part = end_part.replace(' ', '')
-
-    # 3. Vérification du format JJ/MM (5 caractères, ex: 15/04)
-    if len(end_part) == 5 and end_part[2] == '/':
-        current_year = datetime.now().year
-        return f"{end_part}/{current_year}"
-    
-    # 4. Vérification si format déjà complet (JJ/MM/AAAA)
-    if len(end_part) >= 8 and '/' in end_part:
-        return end_part
-
-    # Fallback : date du jour
-    return datetime.now().strftime('%d/%m/%Y')
+    try:
+        # Si c'est déjà un objet datetime (cas fréquent avec pandas/excel)
+        if isinstance(date_val, datetime):
+            return date_val.strftime('%d/%m/%Y')
+        
+        # Si c'est une chaine, on essaie de convertir
+        d_str = str(date_val).strip()
+        # On tente une conversion via pandas qui est robuste
+        return pd.to_datetime(d_str, dayfirst=True).strftime('%d/%m/%Y')
+    except:
+        # Si échec, on renvoie la chaine brute
+        return str(date_val)
 
 # --- CLASSE PDF ---
 class PDFTemplate(FPDF):
@@ -138,7 +126,7 @@ def generate_invoice_pdf(row_data, totals, invoice_date):
     pdf.set_text_color(0)
     pdf.cell(90, 6, f"N: {safe_text(row_data['ref'])}", 0, 1, 'R')
     
-    # DATE FACTURE (Date Fin Période)
+    # DATE FACTURE (Date du Virement)
     pdf.set_x(110)
     pdf.set_font('Arial', '', 10)
     pdf.cell(90, 6, f"Date: {safe_text(invoice_date)}", 0, 1, 'R')
@@ -255,7 +243,7 @@ def generate_invoice_pdf(row_data, totals, invoice_date):
 
 # --- INTERFACE ---
 st.title("📄 Édition Factures & Mise à jour Excel")
-st.info("Période '01/04 au 15/04' -> Date Facture '15/04/202X'")
+st.info("La date de la facture sera identique à la **Date du Virement** indiquée dans le fichier Excel.")
 
 uploaded_file = st.file_uploader("📂 Charger le fichier Excel (xlsx)", type=['xlsx'])
 
@@ -265,7 +253,8 @@ if uploaded_file:
         df = pd.read_excel(uploaded_file, header=10)
         df.columns = df.columns.str.strip()
         
-        required_cols = ['Restaurant name', 'Commission YASSIR', 'Item total', 'Facture N°', 'Période']
+        # Ajout 'Date du virement' dans les colonnes requises
+        required_cols = ['Restaurant name', 'Commission YASSIR', 'Item total', 'Facture N°', 'Date du virement']
         missing = [c for c in required_cols if c not in df.columns]
         
         if missing:
@@ -303,7 +292,7 @@ if uploaded_file:
                                 tva = comm_ht * 0.20
                                 ttc = comm_ht + tva
                                 net_pay_initial = sales - ttc
-                                net_pay_final = net_pay_initial + tva # Net + TVA
+                                net_pay_final = net_pay_initial + tva
                                 
                                 totals = {
                                     'sales': sales, 
@@ -313,9 +302,9 @@ if uploaded_file:
                                     'net_pay': net_pay_final
                                 }
                                 
-                                # 2. DATE FACTURE
-                                period_str = row.get('Période', '')
-                                invoice_date = extract_end_date(period_str)
+                                # 2. DATE FACTURE = DATE VIREMENT
+                                raw_date_virement = row.get('Date du virement', '')
+                                invoice_date = format_date_virement(raw_date_virement)
                                 
                                 # 3. REFERENCE
                                 current_seq = start_idx + count
