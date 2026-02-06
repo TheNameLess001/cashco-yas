@@ -7,7 +7,7 @@ import os
 import zipfile
 import io
 import re
-from num2words import num2words # Nécessaire pour les chiffres en lettres
+from num2words import num2words 
 
 # --- CONFIGURATION DU THÈME ---
 YASSIR_PURPLE = "#6f42c1"
@@ -57,23 +57,36 @@ def clean_currency(value):
 
 def extract_end_date(period_str):
     """
-    Extrait la date de fin d'une période.
-    Ex: '01/01/2025 - 31/01/2025' -> '31/01/2025'
+    Gère le format '01/04 au 15/04'.
+    Récupère la date de fin et ajoute l'année en cours si manquante.
     """
-    period_str = str(period_str).strip()
-    try:
-        # Recherche de motifs de dates (JJ/MM/AAAA)
-        dates = re.findall(r'\d{2}/\d{2}/\d{4}', period_str)
-        if dates:
-            return dates[-1] # Retourne la dernière date trouvée
-        # Recherche de motifs (JJ-MM-AAAA)
-        dates_hyphen = re.findall(r'\d{2}-\d{2}-\d{4}', period_str)
-        if dates_hyphen:
-            return dates_hyphen[-1]
-        
-        return datetime.now().strftime('%d/%m/%Y')
-    except:
-        return datetime.now().strftime('%d/%m/%Y')
+    text = str(period_str).strip().lower()
+    
+    # 1. On sépare sur " au ", " - " ou " to "
+    # On remplace tout par un séparateur unique
+    text = text.replace(' au ', '|').replace(' - ', '|').replace(' to ', '|')
+    
+    if '|' in text:
+        # On prend la partie droite (fin de période)
+        end_part = text.split('|')[-1].strip()
+    else:
+        # Si pas de séparateur, on prend tout le texte (date unique ?)
+        end_part = text
+
+    # 2. Nettoyage (enlève espaces)
+    end_part = end_part.replace(' ', '')
+
+    # 3. Vérification du format JJ/MM (5 caractères, ex: 15/04)
+    if len(end_part) == 5 and end_part[2] == '/':
+        current_year = datetime.now().year
+        return f"{end_part}/{current_year}"
+    
+    # 4. Vérification si format déjà complet (JJ/MM/AAAA)
+    if len(end_part) >= 8 and '/' in end_part:
+        return end_part
+
+    # Fallback : date du jour
+    return datetime.now().strftime('%d/%m/%Y')
 
 # --- CLASSE PDF ---
 class PDFTemplate(FPDF):
@@ -113,7 +126,7 @@ def generate_invoice_pdf(row_data, totals, invoice_date):
     pdf.alias_nb_pages()
     pdf.add_page()
     
-    # TITRE : FACTURE (simplifié)
+    # TITRE
     pdf.set_xy(110, 50)
     pdf.set_font('Arial', 'B', 14)
     pdf.set_text_color(*YASSIR_RGB)
@@ -125,7 +138,7 @@ def generate_invoice_pdf(row_data, totals, invoice_date):
     pdf.set_text_color(0)
     pdf.cell(90, 6, f"N: {safe_text(row_data['ref'])}", 0, 1, 'R')
     
-    # Date Facture (Date fin période)
+    # DATE FACTURE (Date Fin Période)
     pdf.set_x(110)
     pdf.set_font('Arial', '', 10)
     pdf.cell(90, 6, f"Date: {safe_text(invoice_date)}", 0, 1, 'R')
@@ -216,11 +229,9 @@ def generate_invoice_pdf(row_data, totals, invoice_date):
     aline("TVA 20%", totals['tva'])
     aline("Total Facture TTC", totals['inv_ttc'], True)
     pdf.ln(2)
-    # NET A PAYER TTC = (Ventes - Comm TTC) + TVA (pour annuler la TVA sur la comm)
-    # Note : Le libellé demandé est "NET A PAYER PARTENAIRE" (TTC)
     aline("NET A PAYER PARTENAIRE", totals['net_pay'], True, True)
     
-    # ARRETÉ DE COMPTE EN LETTRES (Sur le Net à Payer)
+    # ARRETÉ DE COMPTE EN LETTRES
     pdf.set_y(165)
     pdf.set_font('Arial', 'I', 8)
     pdf.set_text_color(100)
@@ -244,13 +255,13 @@ def generate_invoice_pdf(row_data, totals, invoice_date):
 
 # --- INTERFACE ---
 st.title("📄 Édition Factures & Mise à jour Excel")
-st.info("Configuration : Net à Payer = (Net Mentionné + TVA) | Date Facture = Fin de Période")
+st.info("Période '01/04 au 15/04' -> Date Facture '15/04/202X'")
 
 uploaded_file = st.file_uploader("📂 Charger le fichier Excel (xlsx)", type=['xlsx'])
 
 if uploaded_file:
     try:
-        # Lecture (Header ligne 11)
+        # Lecture HEADER LIGNE 11
         df = pd.read_excel(uploaded_file, header=10)
         df.columns = df.columns.str.strip()
         
@@ -285,18 +296,14 @@ if uploaded_file:
                         count = 0
                         for index, row in df_to_process.iterrows():
                             try:
-                                # 1. CALCULS FINANCIERS
+                                # 1. CALCULS
                                 sales = clean_currency(row.get('Item total', 0))
                                 comm_ht = clean_currency(row.get('Commission YASSIR', 0))
                                 
                                 tva = comm_ht * 0.20
                                 ttc = comm_ht + tva
-                                
-                                # Ancien Net = Sales - TTC
                                 net_pay_initial = sales - ttc
-                                
-                                # NOUVEAU NET = Ancien Net + TVA (Formule demandée)
-                                net_pay_final = net_pay_initial + tva
+                                net_pay_final = net_pay_initial + tva # Net + TVA
                                 
                                 totals = {
                                     'sales': sales, 
@@ -307,7 +314,8 @@ if uploaded_file:
                                 }
                                 
                                 # 2. DATE FACTURE
-                                invoice_date = extract_end_date(row.get('Période', ''))
+                                period_str = row.get('Période', '')
+                                invoice_date = extract_end_date(period_str)
                                 
                                 # 3. REFERENCE
                                 current_seq = start_idx + count
@@ -334,7 +342,7 @@ if uploaded_file:
                     st.markdown("---")
                     col_zip, col_xls = st.columns(2)
                     
-                    # ZIP DOWNLOAD
+                    # ZIP
                     b_zip = base64.b64encode(zip_buffer.getvalue()).decode()
                     file_name_zip = f"Factures_{datetime.now().strftime('%Y%m%d')}.zip"
                     col_zip.markdown(f'''
@@ -345,7 +353,7 @@ if uploaded_file:
                         </a>
                     ''', unsafe_allow_html=True)
                     
-                    # EXCEL DOWNLOAD
+                    # EXCEL
                     excel_buffer = io.BytesIO()
                     with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
                         df.to_excel(writer, index=False, sheet_name='Suivi_Facturation')
