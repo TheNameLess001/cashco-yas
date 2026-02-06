@@ -57,23 +57,33 @@ def clean_currency(value):
 
 def format_date_virement(date_val):
     """
-    Formate la date du virement en JJ/MM/AAAA.
-    Gère les formats datetime Excel et les chaines de caractères.
+    Formate la date du virement en JJ/MM/AAAA de manière robuste.
     """
     if pd.isna(date_val) or str(date_val).strip() == "":
-        return datetime.now().strftime('%d/%m/%Y') # Par défaut aujourd'hui si vide
+        # Si la date est vide, on renvoie la date d'aujourd'hui par sécurité
+        # Ou on peut renvoyer "" si vous préférez laisser vide
+        return datetime.now().strftime('%d/%m/%Y')
     
     try:
-        # Si c'est déjà un objet datetime (cas fréquent avec pandas/excel)
-        if isinstance(date_val, datetime):
+        # 1. Si c'est déjà un objet Timestamp/Datetime (cas standard Excel)
+        if isinstance(date_val, (pd.Timestamp, datetime)):
             return date_val.strftime('%d/%m/%Y')
         
-        # Si c'est une chaine, on essaie de convertir
+        # 2. Si c'est du texte, on essaie de parser
         d_str = str(date_val).strip()
-        # On tente une conversion via pandas qui est robuste
-        return pd.to_datetime(d_str, dayfirst=True).strftime('%d/%m/%Y')
+        
+        # Nettoyage des heures si présentes (ex: "2025-04-15 00:00:00")
+        if " " in d_str:
+            d_str = d_str.split(" ")[0]
+            
+        # Essai de conversion flexible
+        dt = pd.to_datetime(d_str, dayfirst=True, errors='coerce')
+        if not pd.isna(dt):
+            return dt.strftime('%d/%m/%Y')
+            
+        # Si échec conversion, on renvoie la chaine brute
+        return d_str
     except:
-        # Si échec, on renvoie la chaine brute
         return str(date_val)
 
 # --- CLASSE PDF ---
@@ -126,10 +136,12 @@ def generate_invoice_pdf(row_data, totals, invoice_date):
     pdf.set_text_color(0)
     pdf.cell(90, 6, f"N: {safe_text(row_data['ref'])}", 0, 1, 'R')
     
-    # DATE FACTURE (Date du Virement)
+    # DATE FACTURE (Ici on force l'affichage de la date passée en paramètre)
     pdf.set_x(110)
     pdf.set_font('Arial', '', 10)
-    pdf.cell(90, 6, f"Date: {safe_text(invoice_date)}", 0, 1, 'R')
+    # Debug visuel si vide : on met un tiret pour signaler qu'elle manque dans le excel
+    display_date = invoice_date if invoice_date else "-" 
+    pdf.cell(90, 6, f"Date: {safe_text(display_date)}", 0, 1, 'R')
     
     # --- BLOC DESTINATAIRE ---
     sy = 50
@@ -226,6 +238,8 @@ def generate_invoice_pdf(row_data, totals, invoice_date):
     
     try:
         amount_to_word = totals['net_pay']
+        # Arrondi à 2 décimales pour éviter les erreurs d'arrondi flottant dans num2words
+        amount_to_word = round(amount_to_word, 2)
         text_amount = num2words(amount_to_word, lang='fr', to='currency', currency='DH').upper()
         text_amount = text_amount.replace('EURO', 'DIRHAM').replace('EUROS', 'DIRHAMS')
     except:
@@ -243,17 +257,17 @@ def generate_invoice_pdf(row_data, totals, invoice_date):
 
 # --- INTERFACE ---
 st.title("📄 Édition Factures & Mise à jour Excel")
-st.info("La date de la facture sera identique à la **Date du Virement** indiquée dans le fichier Excel.")
+st.info("La date de la facture sera strictement égale à la **Date du Virement**.")
 
 uploaded_file = st.file_uploader("📂 Charger le fichier Excel (xlsx)", type=['xlsx'])
 
 if uploaded_file:
     try:
-        # Lecture HEADER LIGNE 11
+        # Lecture HEADER LIGNE 11 (Header=10)
         df = pd.read_excel(uploaded_file, header=10)
         df.columns = df.columns.str.strip()
         
-        # Ajout 'Date du virement' dans les colonnes requises
+        # Vérification des colonnes
         required_cols = ['Restaurant name', 'Commission YASSIR', 'Item total', 'Facture N°', 'Date du virement']
         missing = [c for c in required_cols if c not in df.columns]
         
@@ -267,6 +281,12 @@ if uploaded_file:
             else:
                 st.success(f"✅ {len(df_to_process)} factures prêtes.")
                 
+                # Petit tableau de prévisualisation des dates
+                st.markdown("🔍 **Aperçu des dates détectées :**")
+                preview_df = df_to_process[['Restaurant name', 'Date du virement']].head(3).copy()
+                preview_df['Date Formatée'] = preview_df['Date du virement'].apply(format_date_virement)
+                st.dataframe(preview_df)
+
                 c1, c2 = st.columns(2)
                 with c1:
                     start_idx = st.number_input("Index départ (ex: 378)", value=378, step=1)
@@ -302,7 +322,7 @@ if uploaded_file:
                                     'net_pay': net_pay_final
                                 }
                                 
-                                # 2. DATE FACTURE = DATE VIREMENT
+                                # 2. DATE = DATE DU VIREMENT STRICTE
                                 raw_date_virement = row.get('Date du virement', '')
                                 invoice_date = format_date_virement(raw_date_virement)
                                 
