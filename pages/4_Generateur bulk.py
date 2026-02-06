@@ -40,7 +40,6 @@ def clean_filename(name):
     return "".join([c for c in str(name) if c.isalnum() or c in (' ', '-', '_')]).strip()
 
 def clean_currency(value):
-    """Convertit une valeur (str ou float) en float propre."""
     if pd.isna(value) or value == '': return 0.0
     s = str(value).replace('DH', '').replace('MAD', '').replace(' ', '').replace(',', '.')
     try:
@@ -102,29 +101,44 @@ def generate_invoice_pdf(row_data, totals):
     pdf.set_font('Arial', '', 10)
     pdf.cell(90, 6, f"Date: {datetime.now().strftime('%d/%m/%Y')}", 0, 1, 'R')
     
-    # Bloc Destinataire
+    # --- BLOC DESTINATAIRE ---
     sy = 50
+    # Rectangle Gris
     pdf.set_fill_color(248, 248, 248)
     pdf.set_draw_color(220, 220, 220)
     pdf.rect(10, sy, 90, 35, 'FD')
+    
+    # Barre Violette
     pdf.set_fill_color(*YASSIR_RGB)
     pdf.rect(10, sy, 3, 35, 'F')
     
-    # Nom: Raison sociale en priorité, sinon Restaurant Name
+    # 1. Nom Client
     client_name = row_data.get('Raison sociale') if pd.notna(row_data.get('Raison sociale')) else row_data.get('Restaurant name')
-    
     pdf.set_xy(16, sy+4)
     pdf.set_font('Arial', 'B', 10)
     pdf.set_text_color(0)
     pdf.cell(80, 5, safe_text(client_name), 0, 1, 'L')
     
+    # 2. Adresse (Multi-lignes)
     pdf.set_xy(16, sy+10)
     pdf.set_font('Arial', '', 9)
     pdf.set_text_color(60)
-    pdf.cell(80, 5, safe_text(row_data.get('Adresse', 'Casablanca')), 0, 1, 'L')
     
-    pdf.set_xy(16, sy+15)
-    pdf.cell(80, 5, f"ICE: {safe_text(row_data.get('ICE', '-'))}", 0, 1, 'L')
+    adresse_text = safe_text(row_data.get('Adresse', 'Casablanca'))
+    pdf.multi_cell(80, 4, adresse_text, 0, 'L')
+    
+    # 3. ICE (Logique conditionnelle stricte)
+    raw_ice = row_data.get('ICE')
+    # On vérifie si ce n'est pas NaN
+    if pd.notna(raw_ice):
+        ice_str = str(raw_ice).strip()
+        # On vérifie si ce n'est pas vide, pas "0", pas "-"
+        if ice_str and ice_str not in ['0', '-', 'nan', 'None']:
+            current_y = pdf.get_y()
+            pdf.set_xy(16, current_y + 1)
+            pdf.cell(80, 5, f"ICE: {safe_text(ice_str)}", 0, 1, 'L')
+            
+    # --- FIN BLOC ---
     
     # Tableau Headers
     pdf.set_y(100)
@@ -189,7 +203,7 @@ def generate_invoice_pdf(row_data, totals):
     pdf.cell(0, 5, f"Arrete la presente facture a la somme de : {totals['inv_ttc']:,.2f} Dirhams (TTC)", 0, 1, 'L')
     
     rib = str(row_data.get('RIB', ''))
-    if len(rib) > 5:
+    if len(rib) > 5 and 'nan' not in rib.lower():
         pdf.ln(5)
         pdf.set_font('Arial', '', 8)
         pdf.cell(0, 5, f"RIB Paiement : {rib}", 0, 1, 'L')
@@ -204,7 +218,7 @@ uploaded_file = st.file_uploader("📂 Charger le fichier Excel (xlsx)", type=['
 
 if uploaded_file:
     try:
-        # LECTURE AVEC HEADER=10 (Ligne 11)
+        # LECTURE HEADER=10 (Ligne 11)
         df = pd.read_excel(uploaded_file, header=10)
         df.columns = df.columns.str.strip()
         
@@ -213,26 +227,18 @@ if uploaded_file:
         
         if missing:
             st.error(f"❌ Colonnes manquantes : {', '.join(missing)}")
-            st.write("Colonnes détectées :", list(df.columns))
         else:
-            # 1. FILTRAGE
             df_to_process = df[df['Facture N°'].isna() | (df['Facture N°'].astype(str).str.strip() == '')].copy()
             
             if df_to_process.empty:
                 st.warning("⚠️ Aucune ligne à traiter.")
             else:
                 st.success(f"✅ {len(df_to_process)} factures à générer.")
-                st.dataframe(df_to_process[['Restaurant name', 'Commission YASSIR']].head())
-
-                st.sidebar.subheader("🔢 Numérotation Spécifique")
-                st.sidebar.info("Format : [Index]-[Mois]-[Année]YAS")
                 
-                # Saisie de l'index de départ (378 par défaut)
+                st.sidebar.subheader("🔢 Numérotation")
                 start_idx = st.sidebar.number_input("Index de départ (ex: 378)", value=378, step=1)
-                
-                # Suffixe date (automatique ou manuel)
-                default_date_suffix = datetime.now().strftime('%m-%Y')
-                date_suffix = st.sidebar.text_input("Suffixe Date", value=default_date_suffix, help="Par défaut : Mois et Année en cours")
+                default_suffix = datetime.now().strftime('%m-%Y')
+                date_suffix = st.sidebar.text_input("Suffixe Date", value=default_suffix)
 
                 if st.button("🚀 GÉNÉRER LES FACTURES (ZIP)"):
                     
@@ -245,7 +251,6 @@ if uploaded_file:
                         count = 0
                         for index, row in df_to_process.iterrows():
                             try:
-                                # Calculs
                                 sales = clean_currency(row.get('Item total', 0))
                                 comm_ht = clean_currency(row.get('Commission YASSIR', 0))
                                 tva = comm_ht * 0.20
@@ -253,16 +258,12 @@ if uploaded_file:
                                 net_pay = sales - ttc 
                                 totals = {'sales': sales, 'comm_ht': comm_ht, 'tva': tva, 'inv_ttc': ttc, 'net_pay': net_pay}
                                 
-                                # --- FORMAT RÉFÉRENCE ---
-                                # Structure : 378-05-2025YAS
+                                # Format Réf: 378-02-2025YAS
                                 current_seq = start_idx + count
                                 current_ref = f"{current_seq}-{date_suffix}YAS"
                                 row['ref'] = current_ref
                                 
-                                # PDF
                                 pdf_bytes = generate_invoice_pdf(row, totals)
-                                
-                                # Nom fichier
                                 safe_name = clean_filename(row.get('Restaurant name', f'Client_{index}'))
                                 filename = f"{current_ref}_{safe_name}.pdf"
                                 
@@ -277,12 +278,12 @@ if uploaded_file:
                     st.success(f"🎉 Terminé ! {count} factures générées.")
                     
                     b_zip = base64.b64encode(zip_buffer.getvalue()).decode()
-                    file_name_zip = f"Factures_Batch_{datetime.now().strftime('%Y%m%d_%H%M')}.zip"
+                    file_name_zip = f"Factures_{datetime.now().strftime('%Y%m%d')}.zip"
                     
                     st.markdown(f'''
                         <a href="data:application/zip;base64,{b_zip}" download="{file_name_zip}">
                             <button style="background-color:#28a745; color:white; border:none; padding:15px 25px; border-radius:8px; width:100%; font-size:16px; font-weight:bold; cursor:pointer;">
-                            📦 TÉLÉCHARGER TOUTES LES FACTURES (.ZIP)
+                            📦 TÉLÉCHARGER LE DOSSIER ZIP
                             </button>
                         </a>
                     ''', unsafe_allow_html=True)
