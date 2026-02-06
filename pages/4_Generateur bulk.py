@@ -9,10 +9,10 @@ import io
 
 # --- CONFIGURATION DU THÈME ---
 YASSIR_PURPLE = "#6f42c1"
-YASSIR_RGB = (111, 66, 193)  # Équivalent RGB pour FPDF
+YASSIR_RGB = (111, 66, 193)
 LOGO_PATH = "logo.png"
 
-st.set_page_config(page_title="Générateur de Factures", page_icon="📄", layout="wide")
+st.set_page_config(page_title="Générateur Factures Yassir", page_icon="📄", layout="wide")
 
 # --- STYLE CSS ---
 st.markdown(f"""
@@ -24,27 +24,33 @@ st.markdown(f"""
     div[data-testid="metric-container"] {{
         background-color: white; 
         border-left: 5px solid {YASSIR_PURPLE};
-        border-radius: 8px;
-        padding: 15px; 
-        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        border-radius: 8px; 
+        padding: 10px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }}
     </style>
 """, unsafe_allow_html=True)
 
 # --- FONCTIONS UTILITAIRES ---
 def safe_text(text):
-    """Nettoie le texte pour éviter les erreurs d'encodage"""
-    if text is None: return ""
+    if text is None or pd.isna(text): return ""
     return str(text).encode('latin-1', 'replace').decode('latin-1')
 
 def clean_filename(name):
-    """Nettoie le nom du fichier pour le ZIP"""
     return "".join([c for c in str(name) if c.isalnum() or c in (' ', '-', '_')]).strip()
 
-# --- CLASSE PDF (Design Yassir) ---
+def clean_currency(value):
+    """Convertit une valeur (str ou float) en float propre."""
+    if pd.isna(value) or value == '': return 0.0
+    s = str(value).replace('DH', '').replace('MAD', '').replace(' ', '').replace(',', '.')
+    try:
+        return float(s)
+    except:
+        return 0.0
+
+# --- CLASSE PDF ---
 class PDFTemplate(FPDF):
     def header(self):
-        # Logo ou Texte Yassir
         if os.path.exists(LOGO_PATH): 
             self.image(LOGO_PATH, 10, 8, 30)
         else:
@@ -75,7 +81,7 @@ class PDFTemplate(FPDF):
         self.set_font('Arial', 'B', 8)
         self.cell(0, 10, f'Page {self.page_no()}/{{nb}}', 0, 0, 'R')
 
-def generate_invoice_pdf(c_data, totals):
+def generate_invoice_pdf(row_data, totals):
     pdf = PDFTemplate()
     pdf.alias_nb_pages()
     pdf.add_page()
@@ -90,7 +96,7 @@ def generate_invoice_pdf(c_data, totals):
     pdf.set_x(110)
     pdf.set_font('Arial', 'B', 10)
     pdf.set_text_color(0)
-    pdf.cell(90, 6, f"N: {safe_text(c_data['ref'])}", 0, 1, 'R')
+    pdf.cell(90, 6, f"N: {safe_text(row_data['ref'])}", 0, 1, 'R')
     
     pdf.set_x(110)
     pdf.set_font('Arial', '', 10)
@@ -104,17 +110,21 @@ def generate_invoice_pdf(c_data, totals):
     pdf.set_fill_color(*YASSIR_RGB)
     pdf.rect(10, sy, 3, 35, 'F')
     
+    # Nom: Raison sociale en priorité, sinon Restaurant Name
+    client_name = row_data.get('Raison sociale') if pd.notna(row_data.get('Raison sociale')) else row_data.get('Restaurant name')
+    
     pdf.set_xy(16, sy+4)
     pdf.set_font('Arial', 'B', 10)
     pdf.set_text_color(0)
-    pdf.cell(80, 5, safe_text(c_data['name']), 0, 1, 'L')
+    pdf.cell(80, 5, safe_text(client_name), 0, 1, 'L')
     
     pdf.set_xy(16, sy+10)
     pdf.set_font('Arial', '', 9)
     pdf.set_text_color(60)
-    pdf.cell(80, 5, safe_text(c_data['address'][:45]), 0, 1, 'L')
+    pdf.cell(80, 5, safe_text(row_data.get('Adresse', 'Casablanca')), 0, 1, 'L')
+    
     pdf.set_xy(16, sy+15)
-    pdf.cell(80, 5, f"ICE: {safe_text(c_data['ice'])}", 0, 1, 'L')
+    pdf.cell(80, 5, f"ICE: {safe_text(row_data.get('ICE', '-'))}", 0, 1, 'L')
     
     # Tableau Headers
     pdf.set_y(100)
@@ -124,7 +134,7 @@ def generate_invoice_pdf(c_data, totals):
     pdf.set_font('Arial', 'B', 9)
     
     cols = [60, 40, 40, 50]
-    hd = ['Periode', 'Ventes TTC (Food)', 'Taux Comm.', 'Commission HT']
+    hd = ['Periode', 'Ventes TTC', 'Taux Comm.', 'Commission HT']
     for i,h in enumerate(hd): 
         pdf.cell(cols[i], 10, safe_text(h), 1, 0, 'C', 1)
     
@@ -134,12 +144,15 @@ def generate_invoice_pdf(c_data, totals):
     pdf.set_font('Arial', '', 9)
     
     # Tableau Data
-    pdf.cell(cols[0], 10, safe_text(c_data['period']), 1, 0, 'C')
+    # Récupération des valeurs du row_data
+    period_val = str(row_data.get('Période', ''))
+    rate_val = str(row_data.get('Taux de commission', '0')).replace('%','')
+    
+    pdf.cell(cols[0], 10, safe_text(period_val), 1, 0, 'C')
     pdf.cell(cols[1], 10, f"{totals['sales']:,.2f}", 1, 0, 'C')
-    pdf.cell(cols[2], 10, f"{c_data['rate']}%", 1, 0, 'C')
+    pdf.cell(cols[2], 10, f"{rate_val}%", 1, 0, 'C')
     pdf.cell(cols[3], 10, f"{totals['comm_ht']:,.2f}", 1, 1, 'C')
     
-    # Totaux
     pdf.ln(8)
     xt = 110
     
@@ -166,125 +179,116 @@ def generate_invoice_pdf(c_data, totals):
     pdf.set_font('Arial', 'I', 8)
     pdf.set_text_color(100)
     pdf.cell(0, 5, f"Arrete la presente facture a la somme de : {totals['inv_ttc']:,.2f} Dirhams (TTC)", 0, 1, 'L')
+    
+    # Info RIB si dispo
+    rib = str(row_data.get('RIB', ''))
+    if len(rib) > 5:
+        pdf.ln(5)
+        pdf.set_font('Arial', '', 8)
+        pdf.cell(0, 5, f"RIB Paiement : {rib}", 0, 1, 'L')
 
     return pdf.output(dest='S').encode('latin-1', errors='replace')
 
-# --- INTERFACE UTILISATEUR ---
-st.title("📄 Édition des Factures (Excel)")
-st.markdown("Importez votre fichier **Excel (.xlsx)** pour générer les factures.")
+# --- INTERFACE ---
+st.title("📄 Édition Factures (Automatique)")
+st.info("Le système génère uniquement les factures pour les lignes où **'Facture N°'** est vide.")
 
-# 1. UPLOAD DU FICHIER
-uploaded_file = st.file_uploader("📂 Charger le fichier Excel", type=['xlsx'])
-
-# 2. CONFIGURATION LATÉRALE
-st.sidebar.markdown("### ⚙️ Configuration")
-c_period = st.sidebar.text_input("Période", "FEVRIER 2026")
-c_rate = st.sidebar.number_input("Taux de Commission %", value=15.0, step=0.5)
-c_prefix = st.sidebar.text_input("Préfixe Facture", "F-2026")
-
-df = None
+uploaded_file = st.file_uploader("📂 Charger le fichier Excel (xlsx)", type=['xlsx'])
 
 if uploaded_file:
     try:
-        # Lecture du fichier Excel
         df = pd.read_excel(uploaded_file)
         
-        # Vérification des colonnes essentielles
-        # On cherche une colonne qui ressemble à "Total Food" et "Restaurant Name"
-        col_sales = next((c for c in df.columns if "total" in c.lower() and "food" in c.lower()), None)
-        col_name = next((c for c in df.columns if "restaurant" in c.lower() or "name" in c.lower()), None)
+        # Nettoyage des noms de colonnes (supprime les espaces avant/après)
+        df.columns = df.columns.str.strip()
+        
+        # Vérification des colonnes critiques
+        required_cols = ['Restaurant name', 'Commission YASSIR', 'Item total', 'Facture N°']
+        missing = [c for c in required_cols if c not in df.columns]
+        
+        if missing:
+            st.error(f"❌ Colonnes manquantes dans le fichier : {', '.join(missing)}")
+        else:
+            # 1. FILTRAGE : On garde uniquement les lignes où 'Facture N°' est vide ou NaN
+            df_to_process = df[df['Facture N°'].isna() | (df['Facture N°'].astype(str).str.strip() == '')].copy()
+            
+            if df_to_process.empty:
+                st.warning("⚠️ Aucune ligne à traiter (toutes les lignes ont déjà un N° de Facture).")
+            else:
+                st.success(f"✅ {len(df_to_process)} factures à générer détectées.")
+                
+                # Prévisualisation
+                st.dataframe(df_to_process[['Restaurant name', 'Commission YASSIR', 'Période']].head())
 
-        if col_sales:
-            # Nettoyage des données (enlève les "MAD", espaces, etc.)
-            clean_sales = df[col_sales].astype(str).str.replace(r'[^\d.]', '', regex=True)
-            df['calc_sales'] = pd.to_numeric(clean_sales, errors='coerce').fillna(0)
-            
-            # KPI GLOBAUX
-            total_sales = df['calc_sales'].sum()
-            total_comm = total_sales * (c_rate/100)
-            
-            st.markdown("---")
-            k1, k2, k3 = st.columns(3)
-            k1.metric("Ventes Totales", f"{total_sales:,.2f} DH")
-            k2.metric("Commission HT", f"{total_comm:,.2f} DH")
-            k3.metric("Fichiers détectés", f"{len(df)} lignes")
-            
-            # 3. GÉNÉRATION ZIP
-            st.subheader("📦 Téléchargement des Factures")
-            
-            if st.button("🚀 GÉNÉRER LES FACTURES (ZIP)"):
-                with st.spinner("Génération en cours..."):
+                # Configuration Facture
+                st.sidebar.subheader("🔢 Numérotation")
+                inv_prefix = st.sidebar.text_input("Préfixe", f"F-{datetime.now().strftime('%Y%m')}")
+                start_idx = st.sidebar.number_input("Index de départ", value=1, step=1)
+
+                if st.button("🚀 LANCER LA GÉNÉRATION (ZIP)"):
+                    
                     zip_buffer = io.BytesIO()
+                    progress_text = "Génération en cours..."
+                    my_bar = st.progress(0, text=progress_text)
                     
                     with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
                         
-                        # Si on a une colonne nom de restaurant, on groupe par restaurant
-                        if col_name:
-                            grouped = df.groupby(col_name)
-                            count = 0
-                            for name, group in grouped:
-                                # Calculs par restaurant
-                                g_sales = group['calc_sales'].sum()
-                                g_comm = g_sales * (c_rate/100)
-                                g_tva = g_comm * 0.20
-                                g_ttc = g_comm + g_tva
-                                g_net = g_sales - g_ttc
+                        count = 0
+                        for index, row in df_to_process.iterrows():
+                            try:
+                                # --- CALCULS FINANCIERS ---
+                                # On se base sur la colonne 'Commission YASSIR' comme demandé
+                                sales = clean_currency(row.get('Item total', 0))
+                                comm_ht = clean_currency(row.get('Commission YASSIR', 0))
                                 
-                                totals = {'sales': g_sales, 'comm_ht': g_comm, 'tva': g_tva, 'inv_ttc': g_ttc, 'net_pay': g_net}
+                                # Calcul automatique HT, TVA, TTC
+                                tva = comm_ht * 0.20
+                                ttc = comm_ht + tva
                                 
-                                # Données Facture
-                                safe_name = clean_filename(name)
-                                c_data = {
-                                    'name': str(name), 
-                                    'address': "Adresse Partenaire", # À adapter si colonne dispo
-                                    'city': "Casablanca",
-                                    'ice': "00000000", 
-                                    'period': c_period, 
-                                    'ref': f"{c_prefix}-{str(count+1).zfill(3)}", 
-                                    'rate': c_rate
+                                # Le Net à payer au partenaire = Ventes - Commission TTC
+                                # (Sauf si la colonne 'Reste à payer' est préférée, mais le calcul assure la cohérence)
+                                net_pay = sales - ttc 
+                                
+                                totals = {
+                                    'sales': sales,
+                                    'comm_ht': comm_ht,
+                                    'tva': tva,
+                                    'inv_ttc': ttc,
+                                    'net_pay': net_pay
                                 }
                                 
+                                # Génération Référence Facture
+                                current_ref = f"{inv_prefix}-{str(start_idx + count).zfill(3)}"
+                                row['ref'] = current_ref # On ajoute la ref temporairement à la ligne pour le PDF
+                                
                                 # Création PDF
-                                try:
-                                    pdf_bytes = generate_invoice_pdf(c_data, totals)
-                                    zip_file.writestr(f"Facture_{safe_name}.pdf", pdf_bytes)
-                                    count += 1
-                                except Exception as e:
-                                    st.warning(f"Erreur pour {name}: {e}")
-                            
-                            st.success(f"✅ {count} factures générées avec succès !")
-                            
-                        else:
-                            # Si pas de nom de restaurant, on fait une facture globale
-                            st.warning("⚠️ Colonne 'Restaurant Name' non trouvée. Une seule facture globale sera générée.")
-                            
-                            g_tva = total_comm * 0.20
-                            g_ttc = total_comm + g_tva
-                            g_net = total_sales - g_ttc
-                            totals = {'sales': total_sales, 'comm_ht': total_comm, 'tva': g_tva, 'inv_ttc': g_ttc, 'net_pay': g_net}
-                            
-                            c_data = {
-                                'name': "Client Global", 'address': "-", 'city': "-", 'ice': "-", 
-                                'period': c_period, 'ref': f"{c_prefix}-GLOBAL", 'rate': c_rate
-                            }
-                            pdf_bytes = generate_invoice_pdf(c_data, totals)
-                            zip_file.writestr("Facture_Globale.pdf", pdf_bytes)
+                                pdf_bytes = generate_invoice_pdf(row, totals)
+                                
+                                # Nom du fichier
+                                safe_name = clean_filename(row.get('Restaurant name', f'Client_{index}'))
+                                filename = f"{current_ref}_{safe_name}.pdf"
+                                
+                                zip_file.writestr(filename, pdf_bytes)
+                                count += 1
+                                my_bar.progress(int((count / len(df_to_process)) * 100))
+                                
+                            except Exception as e:
+                                st.error(f"Erreur ligne {index} ({row.get('Restaurant name')}): {e}")
 
-                    # Bouton de téléchargement
+                    my_bar.empty()
+                    st.success(f"🎉 Terminé ! {count} factures générées.")
+                    
+                    # Bouton Téléchargement
                     b_zip = base64.b64encode(zip_buffer.getvalue()).decode()
+                    file_name_zip = f"Factures_Batch_{datetime.now().strftime('%Y%m%d_%H%M')}.zip"
+                    
                     st.markdown(f'''
-                        <a href="data:application/zip;base64,{b_zip}" download="Factures_{datetime.now().strftime('%Y%m%d')}.zip">
-                            <button style="background-color:#28a745; color:white; border:none; padding:15px 25px; border-radius:10px; width:100%; font-size:16px; font-weight:bold; cursor:pointer;">
-                            📥 TÉLÉCHARGER LE DOSSIER ZIP
+                        <a href="data:application/zip;base64,{b_zip}" download="{file_name_zip}">
+                            <button style="background-color:#28a745; color:white; border:none; padding:15px 25px; border-radius:8px; width:100%; font-size:16px; font-weight:bold; cursor:pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+                            📦 TÉLÉCHARGER TOUTES LES FACTURES (.ZIP)
                             </button>
                         </a>
                     ''', unsafe_allow_html=True)
 
-        else:
-            st.error("❌ Impossible de trouver la colonne des ventes (ex: 'Total Food'). Vérifiez votre fichier Excel.")
-
     except Exception as e:
-        st.error(f"Erreur lors de la lecture du fichier : {e}")
-
-else:
-    st.info("👆 Veuillez uploader un fichier Excel pour commencer.")
+        st.error(f"Erreur de lecture du fichier : {e}")
