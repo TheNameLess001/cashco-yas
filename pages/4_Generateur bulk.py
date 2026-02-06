@@ -28,6 +28,13 @@ st.markdown(f"""
         padding: 10px;
         box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }}
+    /* Style boutons */
+    .stButton>button {{
+        width: 100%;
+        border-radius: 8px;
+        height: 3em;
+        font-weight: bold;
+    }}
     </style>
 """, unsafe_allow_html=True)
 
@@ -103,44 +110,36 @@ def generate_invoice_pdf(row_data, totals):
     
     # --- BLOC DESTINATAIRE ---
     sy = 50
-    # Rectangle Gris
     pdf.set_fill_color(248, 248, 248)
     pdf.set_draw_color(220, 220, 220)
     pdf.rect(10, sy, 90, 35, 'FD')
-    
-    # Barre Violette
     pdf.set_fill_color(*YASSIR_RGB)
     pdf.rect(10, sy, 3, 35, 'F')
     
-    # 1. Nom Client
+    # 1. Nom
     client_name = row_data.get('Raison sociale') if pd.notna(row_data.get('Raison sociale')) else row_data.get('Restaurant name')
     pdf.set_xy(16, sy+4)
     pdf.set_font('Arial', 'B', 10)
     pdf.set_text_color(0)
     pdf.cell(80, 5, safe_text(client_name), 0, 1, 'L')
     
-    # 2. Adresse (Multi-lignes)
+    # 2. Adresse
     pdf.set_xy(16, sy+10)
     pdf.set_font('Arial', '', 9)
     pdf.set_text_color(60)
-    
     adresse_text = safe_text(row_data.get('Adresse', 'Casablanca'))
     pdf.multi_cell(80, 4, adresse_text, 0, 'L')
     
-    # 3. ICE (Logique conditionnelle stricte)
+    # 3. ICE (Condition stricte)
     raw_ice = row_data.get('ICE')
-    # On vérifie si ce n'est pas NaN
     if pd.notna(raw_ice):
         ice_str = str(raw_ice).strip()
-        # On vérifie si ce n'est pas vide, pas "0", pas "-"
-        if ice_str and ice_str not in ['0', '-', 'nan', 'None']:
+        if ice_str and ice_str not in ['0', '-', 'nan', 'None', '']:
             current_y = pdf.get_y()
             pdf.set_xy(16, current_y + 1)
             pdf.cell(80, 5, f"ICE: {safe_text(ice_str)}", 0, 1, 'L')
             
-    # --- FIN BLOC ---
-    
-    # Tableau Headers
+    # --- TABLEAU ---
     pdf.set_y(100)
     pdf.set_fill_color(*YASSIR_RGB)
     pdf.set_draw_color(*YASSIR_RGB)
@@ -157,7 +156,7 @@ def generate_invoice_pdf(row_data, totals):
     pdf.set_text_color(0)
     pdf.set_font('Arial', '', 9)
     
-    # Tableau Data
+    # Data
     period_val = str(row_data.get('Période', ''))
     raw_rate = row_data.get('Taux de commission', '0')
     try:
@@ -211,14 +210,14 @@ def generate_invoice_pdf(row_data, totals):
     return pdf.output(dest='S').encode('latin-1', errors='replace')
 
 # --- INTERFACE ---
-st.title("📄 Édition Factures (Automatique)")
-st.info("Le système génère uniquement les factures pour les lignes où **'Facture N°'** est vide.")
+st.title("📄 Édition Factures & Mise à jour Excel")
+st.info("Ce module génère les PDF et vous permet de récupérer **votre fichier Excel complété** avec les numéros de factures générés.")
 
 uploaded_file = st.file_uploader("📂 Charger le fichier Excel (xlsx)", type=['xlsx'])
 
 if uploaded_file:
     try:
-        # LECTURE HEADER=10 (Ligne 11)
+        # LECTURE AVEC HEADER LIGNE 11 (index 10)
         df = pd.read_excel(uploaded_file, header=10)
         df.columns = df.columns.str.strip()
         
@@ -228,22 +227,26 @@ if uploaded_file:
         if missing:
             st.error(f"❌ Colonnes manquantes : {', '.join(missing)}")
         else:
+            # Filtrage des lignes sans numéro de facture
             df_to_process = df[df['Facture N°'].isna() | (df['Facture N°'].astype(str).str.strip() == '')].copy()
             
             if df_to_process.empty:
-                st.warning("⚠️ Aucune ligne à traiter.")
+                st.warning("⚠️ Toutes les lignes ont déjà un numéro de facture. Rien à traiter.")
             else:
                 st.success(f"✅ {len(df_to_process)} factures à générer.")
                 
-                st.sidebar.subheader("🔢 Numérotation")
-                start_idx = st.sidebar.number_input("Index de départ (ex: 378)", value=378, step=1)
-                default_suffix = datetime.now().strftime('%m-%Y')
-                date_suffix = st.sidebar.text_input("Suffixe Date", value=default_suffix)
-
-                if st.button("🚀 GÉNÉRER LES FACTURES (ZIP)"):
+                # Options Numérotation
+                c1, c2 = st.columns(2)
+                with c1:
+                    start_idx = st.number_input("Index de départ (ex: 378)", value=378, step=1)
+                with c2:
+                    default_suffix = datetime.now().strftime('%m-%Y')
+                    date_suffix = st.text_input("Suffixe Date", value=default_suffix)
+                
+                if st.button("🚀 GÉNÉRER (PDF + EXCEL À JOUR)"):
                     
                     zip_buffer = io.BytesIO()
-                    progress_text = "Génération en cours..."
+                    progress_text = "Traitement en cours..."
                     my_bar = st.progress(0, text=progress_text)
                     
                     with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
@@ -251,6 +254,7 @@ if uploaded_file:
                         count = 0
                         for index, row in df_to_process.iterrows():
                             try:
+                                # 1. Calculs
                                 sales = clean_currency(row.get('Item total', 0))
                                 comm_ht = clean_currency(row.get('Commission YASSIR', 0))
                                 tva = comm_ht * 0.20
@@ -258,11 +262,18 @@ if uploaded_file:
                                 net_pay = sales - ttc 
                                 totals = {'sales': sales, 'comm_ht': comm_ht, 'tva': tva, 'inv_ttc': ttc, 'net_pay': net_pay}
                                 
-                                # Format Réf: 378-02-2025YAS
+                                # 2. Génération Référence
                                 current_seq = start_idx + count
                                 current_ref = f"{current_seq}-{date_suffix}YAS"
+                                
+                                # 3. MISE À JOUR DU DATAFRAME PRINCIPAL
+                                # On utilise .at[index, col] pour modifier la ligne originale
+                                df.at[index, 'Facture N°'] = current_ref
+                                
+                                # On ajoute la ref temporaire à la ligne 'row' pour l'envoi au PDF
                                 row['ref'] = current_ref
                                 
+                                # 4. Création PDF
                                 pdf_bytes = generate_invoice_pdf(row, totals)
                                 safe_name = clean_filename(row.get('Restaurant name', f'Client_{index}'))
                                 filename = f"{current_ref}_{safe_name}.pdf"
@@ -275,18 +286,39 @@ if uploaded_file:
                                 st.error(f"Erreur ligne {index}: {e}")
 
                     my_bar.empty()
-                    st.success(f"🎉 Terminé ! {count} factures générées.")
+                    st.success(f"🎉 Terminé ! {count} factures créées et Excel mis à jour.")
                     
+                    # --- SECTION TÉLÉCHARGEMENT ---
+                    st.markdown("---")
+                    col_zip, col_xls = st.columns(2)
+                    
+                    # 1. BOUTON ZIP (Factures PDF)
                     b_zip = base64.b64encode(zip_buffer.getvalue()).decode()
                     file_name_zip = f"Factures_{datetime.now().strftime('%Y%m%d')}.zip"
-                    
-                    st.markdown(f'''
+                    col_zip.markdown(f'''
                         <a href="data:application/zip;base64,{b_zip}" download="{file_name_zip}">
-                            <button style="background-color:#28a745; color:white; border:none; padding:15px 25px; border-radius:8px; width:100%; font-size:16px; font-weight:bold; cursor:pointer;">
-                            📦 TÉLÉCHARGER LE DOSSIER ZIP
+                            <button style="background-color:{YASSIR_PURPLE}; color:white; border:none; padding:15px; border-radius:10px; width:100%; font-weight:bold; cursor:pointer;">
+                            📦 TÉLÉCHARGER LES FACTURES (ZIP)
+                            </button>
+                        </a>
+                    ''', unsafe_allow_html=True)
+                    
+                    # 2. BOUTON EXCEL (Fichier mis à jour)
+                    # Création du buffer Excel
+                    excel_buffer = io.BytesIO()
+                    with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+                        df.to_excel(writer, index=False, sheet_name='Suivi_Facturation')
+                        
+                    b_xls = base64.b64encode(excel_buffer.getvalue()).decode()
+                    file_name_xls = f"Suivi_Mis_a_Jour_{datetime.now().strftime('%Y%m%d')}.xlsx"
+                    
+                    col_xls.markdown(f'''
+                        <a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b_xls}" download="{file_name_xls}">
+                            <button style="background-color:#28a745; color:white; border:none; padding:15px; border-radius:10px; width:100%; font-weight:bold; cursor:pointer;">
+                            📊 TÉLÉCHARGER LE FICHIER EXCEL (MÀJ)
                             </button>
                         </a>
                     ''', unsafe_allow_html=True)
 
     except Exception as e:
-        st.error(f"Erreur: {e}")
+        st.error(f"Erreur critique: {e}")
