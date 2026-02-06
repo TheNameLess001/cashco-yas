@@ -103,4 +103,193 @@ class PDFTemplate(FPDF):
         self.set_text_color(120)
         self.multi_cell(0, 3, "YASSIR MAROC SARL au capital de 2,000,000 DH\nICE N002148105000084 - RC 413733 - IF 26164744", 0, 'C')
         
-        self.set
+        self.set_y(-12)
+        self.set_text_color(*YASSIR_RGB)
+        self.set_font('Arial', 'B', 8)
+        self.cell(0, 10, f'Page {self.page_no()}/{{nb}}', 0, 0, 'R')
+
+def generate_invoice_pdf(row_data, totals, invoice_date):
+    pdf = PDFTemplate()
+    pdf.alias_nb_pages()
+    pdf.add_page()
+    
+    # TITRE : FACTURE (simplifié)
+    pdf.set_xy(110, 50)
+    pdf.set_font('Arial', 'B', 14)
+    pdf.set_text_color(*YASSIR_RGB)
+    pdf.cell(90, 8, "FACTURE", 0, 1, 'R')
+    
+    # Info Facture
+    pdf.set_x(110)
+    pdf.set_font('Arial', 'B', 10)
+    pdf.set_text_color(0)
+    pdf.cell(90, 6, f"N: {safe_text(row_data['ref'])}", 0, 1, 'R')
+    
+    # Date Facture (Date fin période)
+    pdf.set_x(110)
+    pdf.set_font('Arial', '', 10)
+    pdf.cell(90, 6, f"Date: {safe_text(invoice_date)}", 0, 1, 'R')
+    
+    # --- BLOC DESTINATAIRE ---
+    sy = 50
+    pdf.set_fill_color(248, 248, 248)
+    pdf.set_draw_color(220, 220, 220)
+    pdf.rect(10, sy, 90, 35, 'FD')
+    pdf.set_fill_color(*YASSIR_RGB)
+    pdf.rect(10, sy, 3, 35, 'F')
+    
+    # Nom
+    client_name = row_data.get('Raison sociale') if pd.notna(row_data.get('Raison sociale')) else row_data.get('Restaurant name')
+    pdf.set_xy(16, sy+4)
+    pdf.set_font('Arial', 'B', 10)
+    pdf.set_text_color(0)
+    pdf.cell(80, 5, safe_text(client_name), 0, 1, 'L')
+    
+    # Adresse
+    pdf.set_xy(16, sy+10)
+    pdf.set_font('Arial', '', 9)
+    pdf.set_text_color(60)
+    adresse_text = safe_text(row_data.get('Adresse', 'Casablanca'))
+    pdf.multi_cell(80, 4, adresse_text, 0, 'L')
+    
+    # ICE
+    raw_ice = row_data.get('ICE')
+    if pd.notna(raw_ice):
+        ice_str = str(raw_ice).strip()
+        if ice_str and ice_str not in ['0', '-', 'nan', 'None', '']:
+            current_y = pdf.get_y()
+            pdf.set_xy(16, current_y + 1)
+            pdf.cell(80, 5, f"ICE: {safe_text(ice_str)}", 0, 1, 'L')
+            
+    # --- TABLEAU ---
+    pdf.set_y(100)
+    pdf.set_fill_color(*YASSIR_RGB)
+    pdf.set_draw_color(*YASSIR_RGB)
+    pdf.set_text_color(255)
+    pdf.set_font('Arial', 'B', 9)
+    
+    cols = [60, 40, 40, 50]
+    hd = ['Periode', 'Ventes TTC', 'Taux Comm.', 'Commission HT']
+    for i,h in enumerate(hd): 
+        pdf.cell(cols[i], 10, safe_text(h), 1, 0, 'C', 1)
+    
+    pdf.ln()
+    pdf.set_draw_color(200)
+    pdf.set_text_color(0)
+    pdf.set_font('Arial', '', 9)
+    
+    # Data
+    period_val = str(row_data.get('Période', ''))
+    raw_rate = row_data.get('Taux de commission', '0')
+    try:
+        if pd.isna(raw_rate):
+            rate_val = "0"
+        else:
+            rate_float = float(str(raw_rate).replace('%', ''))
+            if rate_float < 1: rate_float *= 100
+            rate_val = f"{rate_float:g}"
+    except:
+        rate_val = "0"
+    
+    pdf.cell(cols[0], 10, safe_text(period_val), 1, 0, 'C')
+    pdf.cell(cols[1], 10, f"{totals['sales']:,.2f}", 1, 0, 'C')
+    pdf.cell(cols[2], 10, f"{rate_val}%", 1, 0, 'C')
+    pdf.cell(cols[3], 10, f"{totals['comm_ht']:,.2f}", 1, 1, 'C')
+    
+    pdf.ln(8)
+    xt = 110
+    
+    def aline(l, v, b=False, bg=False):
+        pdf.set_x(xt)
+        pdf.set_font('Arial', 'B' if b else '', 9)
+        pdf.set_text_color(0)
+        if bg: 
+            pdf.set_fill_color(*YASSIR_RGB)
+            pdf.set_text_color(255)
+            pdf.cell(50, 9, safe_text(l), 0, 0, 'L', 1)
+            pdf.cell(40, 9, f"{v:,.2f} DH", 0, 1, 'R', 1)
+        else: 
+            pdf.cell(50, 7, safe_text(l), 1, 0, 'L')
+            pdf.cell(40, 7, f"{v:,.2f}", 1, 1, 'R')
+        
+    aline("Total Commission HT", totals['comm_ht'])
+    aline("TVA 20%", totals['tva'])
+    aline("Total Facture TTC", totals['inv_ttc'], True)
+    pdf.ln(2)
+    # NET A PAYER TTC = (Ventes - Comm TTC) + TVA (pour annuler la TVA sur la comm)
+    # Note : Le libellé demandé est "NET A PAYER PARTENAIRE" (TTC)
+    aline("NET A PAYER PARTENAIRE", totals['net_pay'], True, True)
+    
+    # ARRETÉ DE COMPTE EN LETTRES (Sur le Net à Payer)
+    pdf.set_y(165)
+    pdf.set_font('Arial', 'I', 8)
+    pdf.set_text_color(100)
+    
+    try:
+        amount_to_word = totals['net_pay']
+        text_amount = num2words(amount_to_word, lang='fr', to='currency', currency='DH').upper()
+        text_amount = text_amount.replace('EURO', 'DIRHAM').replace('EUROS', 'DIRHAMS')
+    except:
+        text_amount = f"{totals['net_pay']:,.2f} DIRHAMS"
+
+    pdf.multi_cell(0, 5, f"Arrete la presente facture a la somme de : {safe_text(text_amount)} (NET A PAYER PARTENAIRE)", 0, 'L')
+    
+    rib = str(row_data.get('RIB', ''))
+    if len(rib) > 5 and 'nan' not in rib.lower():
+        pdf.ln(2)
+        pdf.set_font('Arial', '', 8)
+        pdf.cell(0, 5, f"RIB Paiement : {rib}", 0, 1, 'L')
+
+    return pdf.output(dest='S').encode('latin-1', errors='replace')
+
+# --- INTERFACE ---
+st.title("📄 Édition Factures & Mise à jour Excel")
+st.info("Configuration : Net à Payer = (Net Mentionné + TVA) | Date Facture = Fin de Période")
+
+uploaded_file = st.file_uploader("📂 Charger le fichier Excel (xlsx)", type=['xlsx'])
+
+if uploaded_file:
+    try:
+        # Lecture (Header ligne 11)
+        df = pd.read_excel(uploaded_file, header=10)
+        df.columns = df.columns.str.strip()
+        
+        required_cols = ['Restaurant name', 'Commission YASSIR', 'Item total', 'Facture N°', 'Période']
+        missing = [c for c in required_cols if c not in df.columns]
+        
+        if missing:
+            st.error(f"❌ Colonnes manquantes : {', '.join(missing)}")
+        else:
+            df_to_process = df[df['Facture N°'].isna() | (df['Facture N°'].astype(str).str.strip() == '')].copy()
+            
+            if df_to_process.empty:
+                st.warning("⚠️ Toutes les lignes sont déjà traitées.")
+            else:
+                st.success(f"✅ {len(df_to_process)} factures prêtes.")
+                
+                c1, c2 = st.columns(2)
+                with c1:
+                    start_idx = st.number_input("Index départ (ex: 378)", value=378, step=1)
+                with c2:
+                    default_suffix = datetime.now().strftime('%m-%Y')
+                    date_suffix = st.text_input("Suffixe Date Réf.", value=default_suffix)
+                
+                if st.button("🚀 GÉNÉRER (PDF + EXCEL)"):
+                    
+                    zip_buffer = io.BytesIO()
+                    progress_text = "Traitement en cours..."
+                    my_bar = st.progress(0, text=progress_text)
+                    
+                    with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
+                        
+                        count = 0
+                        for index, row in df_to_process.iterrows():
+                            try:
+                                # 1. CALCULS FINANCIERS
+                                sales = clean_currency(row.get('Item total', 0))
+                                comm_ht = clean_currency(row.get('Commission YASSIR', 0))
+                                
+                                tva = comm_ht * 0.20
+                                ttc = comm_ht + tva
+                                
+                                # Ancien Net =
