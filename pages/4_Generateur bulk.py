@@ -182,7 +182,7 @@ def generate_invoice_pdf(row_data, totals, invoice_date):
     pdf.set_font('Arial', 'B', 9)
     
     cols = [60, 40, 40, 50]
-    hd = ['Periode', 'Ventes TTC', 'Taux Comm.', 'Commission HT']
+    hd = ['Periode', 'Note Debours', 'Taux Comm.', 'Commission HT']
     for i,h in enumerate(hd): 
         pdf.cell(cols[i], 10, safe_text(h), 1, 0, 'C', 1)
     
