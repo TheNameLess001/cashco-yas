@@ -6,6 +6,7 @@ from datetime import datetime
 import os
 import zipfile
 import io
+from num2words import num2words  # Nécessaire pour convertir les chiffres en lettres
 
 # --- CONFIGURATION DU THÈME ---
 YASSIR_PURPLE = "#6f42c1"
@@ -28,7 +29,6 @@ st.markdown(f"""
         padding: 10px;
         box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }}
-    /* Style boutons */
     .stButton>button {{
         width: 100%;
         border-radius: 8px;
@@ -53,6 +53,25 @@ def clean_currency(value):
         return float(s)
     except:
         return 0.0
+
+def extract_end_date(period_str):
+    """
+    Tente d'extraire la date de fin d'une chaîne comme '01/01/2025 - 31/01/2025'
+    ou 'Du 01/05/25 au 31/05/25'. Retourne la date trouvée ou la date du jour par défaut.
+    """
+    period_str = str(period_str).strip()
+    try:
+        # Séparateurs courants
+        separators = [' au ', ' - ', ' to ', ' et ']
+        for sep in separators:
+            if sep in period_str:
+                return period_str.split(sep)[-1].strip()
+        
+        # Si pas de séparateur, on renvoie la chaîne telle quelle (supposant que c'est une date unique)
+        # Si la chaine est trop longue (ex: "Janvier 2025"), on garde tel quel.
+        return period_str
+    except:
+        return datetime.now().strftime('%d/%m/%Y')
 
 # --- CLASSE PDF ---
 class PDFTemplate(FPDF):
@@ -87,16 +106,16 @@ class PDFTemplate(FPDF):
         self.set_font('Arial', 'B', 8)
         self.cell(0, 10, f'Page {self.page_no()}/{{nb}}', 0, 0, 'R')
 
-def generate_invoice_pdf(row_data, totals):
+def generate_invoice_pdf(row_data, totals, extracted_date):
     pdf = PDFTemplate()
     pdf.alias_nb_pages()
     pdf.add_page()
     
-    # Titre
+    # 1. MODIFICATION: Titre changé en "FACTURE"
     pdf.set_xy(110, 50)
     pdf.set_font('Arial', 'B', 14)
     pdf.set_text_color(*YASSIR_RGB)
-    pdf.cell(90, 8, "FACTURE COMMISSION", 0, 1, 'R')
+    pdf.cell(90, 8, "FACTURE", 0, 1, 'R')
     
     # Info Facture
     pdf.set_x(110)
@@ -104,9 +123,10 @@ def generate_invoice_pdf(row_data, totals):
     pdf.set_text_color(0)
     pdf.cell(90, 6, f"N: {safe_text(row_data['ref'])}", 0, 1, 'R')
     
+    # 2. MODIFICATION: Date de la facture = Date de fin de période
     pdf.set_x(110)
     pdf.set_font('Arial', '', 10)
-    pdf.cell(90, 6, f"Date: {datetime.now().strftime('%d/%m/%Y')}", 0, 1, 'R')
+    pdf.cell(90, 6, f"Date: {safe_text(extracted_date)}", 0, 1, 'R')
     
     # --- BLOC DESTINATAIRE ---
     sy = 50
@@ -116,21 +136,21 @@ def generate_invoice_pdf(row_data, totals):
     pdf.set_fill_color(*YASSIR_RGB)
     pdf.rect(10, sy, 3, 35, 'F')
     
-    # 1. Nom
+    # Nom
     client_name = row_data.get('Raison sociale') if pd.notna(row_data.get('Raison sociale')) else row_data.get('Restaurant name')
     pdf.set_xy(16, sy+4)
     pdf.set_font('Arial', 'B', 10)
     pdf.set_text_color(0)
     pdf.cell(80, 5, safe_text(client_name), 0, 1, 'L')
     
-    # 2. Adresse
+    # Adresse
     pdf.set_xy(16, sy+10)
     pdf.set_font('Arial', '', 9)
     pdf.set_text_color(60)
     adresse_text = safe_text(row_data.get('Adresse', 'Casablanca'))
     pdf.multi_cell(80, 4, adresse_text, 0, 'L')
     
-    # 3. ICE (Condition stricte)
+    # ICE
     raw_ice = row_data.get('ICE')
     if pd.notna(raw_ice):
         ice_str = str(raw_ice).strip()
@@ -196,14 +216,26 @@ def generate_invoice_pdf(row_data, totals):
     pdf.ln(2)
     aline("NET A PAYER PARTENAIRE", totals['net_pay'], True, True)
     
+    # 3. MODIFICATION: Arrêté facture en LETTRES basé sur le NET A PAYER
     pdf.set_y(165)
     pdf.set_font('Arial', 'I', 8)
     pdf.set_text_color(100)
-    pdf.cell(0, 5, f"Arrete la presente facture a la somme de : {totals['inv_ttc']:,.2f} Dirhams (TTC)", 0, 1, 'L')
+    
+    # Conversion chiffres -> Lettres
+    try:
+        # On utilise le net_pay comme demandé
+        net_amount = totals['net_pay']
+        text_amount = num2words(net_amount, lang='fr', to='currency', currency='DH').upper()
+        # Correction cosmétique pour "Dirham" si nécessaire
+        text_amount = text_amount.replace('EURO', 'DIRHAM').replace('EUROS', 'DIRHAMS')
+    except:
+        text_amount = f"{net_amount:,.2f} DIRHAMS"
+
+    pdf.multi_cell(0, 5, f"Arrete la presente facture a la somme de : {safe_text(text_amount)} (NET A PAYER PARTENAIRE)", 0, 'L')
     
     rib = str(row_data.get('RIB', ''))
     if len(rib) > 5 and 'nan' not in rib.lower():
-        pdf.ln(5)
+        pdf.ln(2)
         pdf.set_font('Arial', '', 8)
         pdf.cell(0, 5, f"RIB Paiement : {rib}", 0, 1, 'L')
 
@@ -211,39 +243,39 @@ def generate_invoice_pdf(row_data, totals):
 
 # --- INTERFACE ---
 st.title("📄 Édition Factures & Mise à jour Excel")
-st.info("Ce module génère les PDF et vous permet de récupérer **votre fichier Excel complété** avec les numéros de factures générés.")
+st.info("Les factures générées auront la date correspondant à la fin de la période, et le 'Net à Payer' sera indiqué en toutes lettres.")
 
 uploaded_file = st.file_uploader("📂 Charger le fichier Excel (xlsx)", type=['xlsx'])
 
 if uploaded_file:
     try:
-        # LECTURE AVEC HEADER LIGNE 11 (index 10)
+        # LECTURE (Header ligne 11)
         df = pd.read_excel(uploaded_file, header=10)
         df.columns = df.columns.str.strip()
         
-        required_cols = ['Restaurant name', 'Commission YASSIR', 'Item total', 'Facture N°']
+        required_cols = ['Restaurant name', 'Commission YASSIR', 'Item total', 'Facture N°', 'Période']
         missing = [c for c in required_cols if c not in df.columns]
         
         if missing:
             st.error(f"❌ Colonnes manquantes : {', '.join(missing)}")
         else:
-            # Filtrage des lignes sans numéro de facture
+            # Filtrage
             df_to_process = df[df['Facture N°'].isna() | (df['Facture N°'].astype(str).str.strip() == '')].copy()
             
             if df_to_process.empty:
-                st.warning("⚠️ Toutes les lignes ont déjà un numéro de facture. Rien à traiter.")
+                st.warning("⚠️ Toutes les lignes ont déjà un numéro de facture.")
             else:
                 st.success(f"✅ {len(df_to_process)} factures à générer.")
                 
-                # Options Numérotation
+                # Options
                 c1, c2 = st.columns(2)
                 with c1:
                     start_idx = st.number_input("Index de départ (ex: 378)", value=378, step=1)
                 with c2:
                     default_suffix = datetime.now().strftime('%m-%Y')
-                    date_suffix = st.text_input("Suffixe Date", value=default_suffix)
+                    date_suffix = st.text_input("Suffixe Date Réf.", value=default_suffix)
                 
-                if st.button("🚀 GÉNÉRER (PDF + EXCEL À JOUR)"):
+                if st.button("🚀 GÉNÉRER (PDF + EXCEL)"):
                     
                     zip_buffer = io.BytesIO()
                     progress_text = "Traitement en cours..."
@@ -262,19 +294,20 @@ if uploaded_file:
                                 net_pay = sales - ttc 
                                 totals = {'sales': sales, 'comm_ht': comm_ht, 'tva': tva, 'inv_ttc': ttc, 'net_pay': net_pay}
                                 
-                                # 2. Génération Référence
+                                # 2. Extraction de la Date de Facture depuis la Période
+                                period_str = row.get('Période', '')
+                                invoice_date_str = extract_end_date(period_str)
+                                
+                                # 3. Génération Référence
                                 current_seq = start_idx + count
                                 current_ref = f"{current_seq}-{date_suffix}YAS"
                                 
-                                # 3. MISE À JOUR DU DATAFRAME PRINCIPAL
-                                # On utilise .at[index, col] pour modifier la ligne originale
+                                # MÀJ DataFrame
                                 df.at[index, 'Facture N°'] = current_ref
-                                
-                                # On ajoute la ref temporaire à la ligne 'row' pour l'envoi au PDF
                                 row['ref'] = current_ref
                                 
                                 # 4. Création PDF
-                                pdf_bytes = generate_invoice_pdf(row, totals)
+                                pdf_bytes = generate_invoice_pdf(row, totals, invoice_date_str)
                                 safe_name = clean_filename(row.get('Restaurant name', f'Client_{index}'))
                                 filename = f"{current_ref}_{safe_name}.pdf"
                                 
@@ -286,13 +319,13 @@ if uploaded_file:
                                 st.error(f"Erreur ligne {index}: {e}")
 
                     my_bar.empty()
-                    st.success(f"🎉 Terminé ! {count} factures créées et Excel mis à jour.")
+                    st.success(f"🎉 Terminé ! {count} factures générées.")
                     
-                    # --- SECTION TÉLÉCHARGEMENT ---
+                    # --- TÉLÉCHARGEMENTS ---
                     st.markdown("---")
                     col_zip, col_xls = st.columns(2)
                     
-                    # 1. BOUTON ZIP (Factures PDF)
+                    # ZIP
                     b_zip = base64.b64encode(zip_buffer.getvalue()).decode()
                     file_name_zip = f"Factures_{datetime.now().strftime('%Y%m%d')}.zip"
                     col_zip.markdown(f'''
@@ -303,15 +336,13 @@ if uploaded_file:
                         </a>
                     ''', unsafe_allow_html=True)
                     
-                    # 2. BOUTON EXCEL (Fichier mis à jour)
-                    # Création du buffer Excel
+                    # EXCEL
                     excel_buffer = io.BytesIO()
                     with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
                         df.to_excel(writer, index=False, sheet_name='Suivi_Facturation')
                         
                     b_xls = base64.b64encode(excel_buffer.getvalue()).decode()
                     file_name_xls = f"Suivi_Mis_a_Jour_{datetime.now().strftime('%Y%m%d')}.xlsx"
-                    
                     col_xls.markdown(f'''
                         <a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b_xls}" download="{file_name_xls}">
                             <button style="background-color:#28a745; color:white; border:none; padding:15px; border-radius:10px; width:100%; font-weight:bold; cursor:pointer;">
