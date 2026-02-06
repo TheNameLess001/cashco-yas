@@ -145,13 +145,11 @@ def generate_invoice_pdf(row_data, totals):
     
     # Tableau Data
     period_val = str(row_data.get('Période', ''))
-    # Récupération du taux : priorité à la colonne Excel, sinon valeur par défaut
     raw_rate = row_data.get('Taux de commission', '0')
     try:
         if pd.isna(raw_rate):
             rate_val = "0"
         else:
-            # Gestion des formats "0.15", "15", "15%"
             rate_float = float(str(raw_rate).replace('%', ''))
             if rate_float < 1: rate_float *= 100
             rate_val = f"{rate_float:g}"
@@ -206,34 +204,37 @@ uploaded_file = st.file_uploader("📂 Charger le fichier Excel (xlsx)", type=['
 
 if uploaded_file:
     try:
-        # CORRECTION : header=10 signifie que la ligne 11 est l'en-tête (index 0 à 10)
+        # LECTURE AVEC HEADER=10 (Ligne 11)
         df = pd.read_excel(uploaded_file, header=10)
-        
-        # Nettoyage des noms de colonnes
         df.columns = df.columns.str.strip()
         
-        # Vérification des colonnes critiques
         required_cols = ['Restaurant name', 'Commission YASSIR', 'Item total', 'Facture N°']
         missing = [c for c in required_cols if c not in df.columns]
         
         if missing:
-            st.error(f"❌ Colonnes manquantes malgré le changement de ligne : {', '.join(missing)}")
+            st.error(f"❌ Colonnes manquantes : {', '.join(missing)}")
             st.write("Colonnes détectées :", list(df.columns))
         else:
             # 1. FILTRAGE
             df_to_process = df[df['Facture N°'].isna() | (df['Facture N°'].astype(str).str.strip() == '')].copy()
             
             if df_to_process.empty:
-                st.warning("⚠️ Aucune ligne à traiter (toutes les lignes ont déjà un N° de Facture).")
+                st.warning("⚠️ Aucune ligne à traiter.")
             else:
-                st.success(f"✅ {len(df_to_process)} factures à générer détectées.")
+                st.success(f"✅ {len(df_to_process)} factures à générer.")
                 st.dataframe(df_to_process[['Restaurant name', 'Commission YASSIR']].head())
 
-                st.sidebar.subheader("🔢 Numérotation")
-                inv_prefix = st.sidebar.text_input("Préfixe", f"F-{datetime.now().strftime('%Y%m')}")
-                start_idx = st.sidebar.number_input("Index de départ", value=1, step=1)
+                st.sidebar.subheader("🔢 Numérotation Spécifique")
+                st.sidebar.info("Format : [Index]-[Mois]-[Année]YAS")
+                
+                # Saisie de l'index de départ (378 par défaut)
+                start_idx = st.sidebar.number_input("Index de départ (ex: 378)", value=378, step=1)
+                
+                # Suffixe date (automatique ou manuel)
+                default_date_suffix = datetime.now().strftime('%m-%Y')
+                date_suffix = st.sidebar.text_input("Suffixe Date", value=default_date_suffix, help="Par défaut : Mois et Année en cours")
 
-                if st.button("🚀 LANCER LA GÉNÉRATION (ZIP)"):
+                if st.button("🚀 GÉNÉRER LES FACTURES (ZIP)"):
                     
                     zip_buffer = io.BytesIO()
                     progress_text = "Génération en cours..."
@@ -247,15 +248,15 @@ if uploaded_file:
                                 # Calculs
                                 sales = clean_currency(row.get('Item total', 0))
                                 comm_ht = clean_currency(row.get('Commission YASSIR', 0))
-                                
                                 tva = comm_ht * 0.20
                                 ttc = comm_ht + tva
                                 net_pay = sales - ttc 
-                                
                                 totals = {'sales': sales, 'comm_ht': comm_ht, 'tva': tva, 'inv_ttc': ttc, 'net_pay': net_pay}
                                 
-                                # Référence
-                                current_ref = f"{inv_prefix}-{str(start_idx + count).zfill(3)}"
+                                # --- FORMAT RÉFÉRENCE ---
+                                # Structure : 378-05-2025YAS
+                                current_seq = start_idx + count
+                                current_ref = f"{current_seq}-{date_suffix}YAS"
                                 row['ref'] = current_ref
                                 
                                 # PDF
