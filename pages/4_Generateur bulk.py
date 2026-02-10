@@ -7,7 +7,7 @@ import os
 import zipfile
 import io
 import re
-from num2words import num2words
+from num2words import num2words 
 
 # --- CONFIGURATION DU THÈME ---
 YASSIR_PURPLE = "#6f42c1"
@@ -173,7 +173,7 @@ def generate_invoice_pdf(row_data, totals, invoice_date):
     pdf.set_font('Arial', 'B', 9)
     
     cols = [60, 40, 40, 50]
-    # MODIFICATION : Intitulé plus précis si nécessaire, sinon 'Note Debours' est standard
+    # En-têtes : on précise que c'est du HT
     hd = ['Periode', 'Note Debours (HT)', 'Taux Comm.', 'Commission HT']
     for i,h in enumerate(hd): 
         pdf.cell(cols[i], 10, safe_text(h), 1, 0, 'C', 1)
@@ -183,23 +183,29 @@ def generate_invoice_pdf(row_data, totals, invoice_date):
     pdf.set_text_color(0)
     pdf.set_font('Arial', '', 9)
     
-    # Data
+    # Data pour affichage
     period_val = str(row_data.get('Période', ''))
+    
+    # Récupération taux pour affichage pourcentage
+    # (Le calcul réel s'est fait dans la boucle principale, ici c'est juste cosmétique)
     raw_rate = row_data.get('Taux de commission', '0')
     try:
         if pd.isna(raw_rate):
-            rate_val = "0"
+            rate_val_disp = "0"
         else:
-            rate_float = float(str(raw_rate).replace('%', ''))
-            if rate_float < 1: rate_float *= 100
-            rate_val = f"{rate_float:g}"
+            rate_float = float(str(raw_rate).replace('%', '').replace(',', '.'))
+            # Si c'est 0.12 -> on affiche 12
+            if rate_float < 1.0 and rate_float != 0: 
+                rate_float *= 100
+            rate_val_disp = f"{rate_float:g}"
     except:
-        rate_val = "0"
+        rate_val_disp = "0"
     
     pdf.cell(cols[0], 10, safe_text(period_val), 1, 0, 'C')
-    # MODIFICATION : Affiche le montant HT dans la colonne Note Debours
+    # Affiche le HT dans la colonne Note Debours
     pdf.cell(cols[1], 10, f"{totals['sales_ht']:,.2f}", 1, 0, 'C')
-    pdf.cell(cols[2], 10, f"{rate_val}%", 1, 0, 'C')
+    pdf.cell(cols[2], 10, f"{rate_val_disp}%", 1, 0, 'C')
+    # Affiche la commission calculée
     pdf.cell(cols[3], 10, f"{totals['comm_ht']:,.2f}", 1, 1, 'C')
     
     pdf.ln(8)
@@ -221,10 +227,10 @@ def generate_invoice_pdf(row_data, totals, invoice_date):
     aline("Total Commission HT", totals['comm_ht'])
     aline("TVA 20%", totals['tva'])
     aline("Total Facture TTC", totals['inv_ttc'], True)
-    # AJOUT : Ligne Total du panier (TTC)
-    aline("Total du panier", totals['sales'])
+    
+    # Affiche le Total TTC du panier (Item total original)
+    aline("Total du panier", totals['sales_ttc'])
     pdf.ln(2)
-    # MODIFICATION : Libellé "Total à payer TTC"
     aline("Total à payer TTC", totals['net_pay'], True, True)
     
     # ARRETÉ DE COMPTE EN LETTRES
@@ -263,7 +269,8 @@ if uploaded_file:
         df.columns = df.columns.str.strip()
         
         # Vérification des colonnes
-        required_cols = ['Restaurant name', 'Commission YASSIR', 'Item total', 'Facture N°', 'Date du virement']
+        # On a besoin de 'Item total' (Ventes TTC) et 'Taux de commission'
+        required_cols = ['Restaurant name', 'Item total', 'Facture N°', 'Date du virement']
         missing = [c for c in required_cols if c not in df.columns]
         
         if missing:
@@ -276,7 +283,6 @@ if uploaded_file:
             else:
                 st.success(f"✅ {len(df_to_process)} factures prêtes.")
                 
-                # Petit tableau de prévisualisation des dates
                 st.markdown("🔍 **Aperçu des dates détectées :**")
                 preview_df = df_to_process[['Restaurant name', 'Date du virement']].head(3).copy()
                 preview_df['Date Formatée'] = preview_df['Date du virement'].apply(format_date_virement)
@@ -300,39 +306,54 @@ if uploaded_file:
                         count = 0
                         for index, row in df_to_process.iterrows():
                             try:
-                                # 1. CALCULS ADAPTÉS
-                                sales_ttc = clean_currency(row.get('Item total', 0)) # Item total est TTC
-                                sales_ht = sales_ttc / 1.2 # Calcul du HT pour la base de commission (TVA 20%)
+                                # 1. VENTES TTC & HT
+                                sales_ttc = clean_currency(row.get('Item total', 0))
+                                sales_ht = sales_ttc / 1.2 # Base HT
                                 
-                                comm_ht = clean_currency(row.get('Commission YASSIR', 0))
+                                # 2. RECUPERATION & NETTOYAGE TAUX
+                                raw_rate = row.get('Taux de commission', 0)
+                                rate_decimal = 0.0
+                                try:
+                                    if not pd.isna(raw_rate):
+                                        s_rate = str(raw_rate).replace('%', '').replace(',', '.').strip()
+                                        val = float(s_rate)
+                                        # Si > 1 (ex: 12), on considère que c'est 12%. Si <= 1 (ex: 0.12), c'est 12%.
+                                        # Attention au cas 0.
+                                        if val > 1.0: 
+                                            rate_decimal = val / 100.0
+                                        else:
+                                            rate_decimal = val
+                                except:
+                                    rate_decimal = 0.0
                                 
+                                # 3. CALCUL COMMISSION HT
+                                comm_ht = sales_ht * rate_decimal
+                                
+                                # 4. CALCULS FINAUX
                                 tva = comm_ht * 0.20
                                 ttc = comm_ht + tva
-                                
-                                # Net = Ventes TTC - (Commission HT + TVA Commission)
                                 net_pay_final = sales_ttc - ttc
                                 
                                 totals = {
-                                    'sales': sales_ttc,   # Pour "Total du panier"
-                                    'sales_ht': sales_ht, # Pour "Note Debours" dans le tableau
+                                    'sales_ttc': sales_ttc,
+                                    'sales_ht': sales_ht,
                                     'comm_ht': comm_ht, 
                                     'tva': tva, 
                                     'inv_ttc': ttc, 
                                     'net_pay': net_pay_final
                                 }
                                 
-                                # 2. DATE = DATE DU VIREMENT STRICTE
+                                # DATE & REF
                                 raw_date_virement = row.get('Date du virement', '')
                                 invoice_date = format_date_virement(raw_date_virement)
                                 
-                                # 3. REFERENCE
                                 current_seq = start_idx + count
                                 current_ref = f"{current_seq}-{date_suffix}YAS"
                                 
                                 df.at[index, 'Facture N°'] = current_ref
                                 row['ref'] = current_ref
                                 
-                                # 4. PDF
+                                # GENERATION PDF
                                 pdf_bytes = generate_invoice_pdf(row, totals, invoice_date)
                                 safe_name = clean_filename(row.get('Restaurant name', f'Client_{index}'))
                                 filename = f"{current_ref}_{safe_name}.pdf"
@@ -350,7 +371,6 @@ if uploaded_file:
                     st.markdown("---")
                     col_zip, col_xls = st.columns(2)
                     
-                    # ZIP
                     b_zip = base64.b64encode(zip_buffer.getvalue()).decode()
                     file_name_zip = f"Factures_{datetime.now().strftime('%Y%m%d')}.zip"
                     col_zip.markdown(f'''
@@ -361,7 +381,6 @@ if uploaded_file:
                         </a>
                     ''', unsafe_allow_html=True)
                     
-                    # EXCEL
                     excel_buffer = io.BytesIO()
                     with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
                         df.to_excel(writer, index=False, sheet_name='Suivi_Facturation')
