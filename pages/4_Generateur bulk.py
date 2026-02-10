@@ -7,7 +7,7 @@ import os
 import zipfile
 import io
 import re
-from num2words import num2words 
+from num2words import num2words
 
 # --- CONFIGURATION DU THÈME ---
 YASSIR_PURPLE = "#6f42c1"
@@ -60,28 +60,21 @@ def format_date_virement(date_val):
     Formate la date du virement en JJ/MM/AAAA de manière robuste.
     """
     if pd.isna(date_val) or str(date_val).strip() == "":
-        # Si la date est vide, on renvoie la date d'aujourd'hui par sécurité
-        # Ou on peut renvoyer "" si vous préférez laisser vide
         return datetime.now().strftime('%d/%m/%Y')
     
     try:
-        # 1. Si c'est déjà un objet Timestamp/Datetime (cas standard Excel)
         if isinstance(date_val, (pd.Timestamp, datetime)):
             return date_val.strftime('%d/%m/%Y')
         
-        # 2. Si c'est du texte, on essaie de parser
         d_str = str(date_val).strip()
         
-        # Nettoyage des heures si présentes (ex: "2025-04-15 00:00:00")
         if " " in d_str:
             d_str = d_str.split(" ")[0]
             
-        # Essai de conversion flexible
         dt = pd.to_datetime(d_str, dayfirst=True, errors='coerce')
         if not pd.isna(dt):
             return dt.strftime('%d/%m/%Y')
             
-        # Si échec conversion, on renvoie la chaine brute
         return d_str
     except:
         return str(date_val)
@@ -136,10 +129,9 @@ def generate_invoice_pdf(row_data, totals, invoice_date):
     pdf.set_text_color(0)
     pdf.cell(90, 6, f"N: {safe_text(row_data['ref'])}", 0, 1, 'R')
     
-    # DATE FACTURE (Ici on force l'affichage de la date passée en paramètre)
+    # DATE FACTURE
     pdf.set_x(110)
     pdf.set_font('Arial', '', 10)
-    # Debug visuel si vide : on met un tiret pour signaler qu'elle manque dans le excel
     display_date = invoice_date if invoice_date else "-" 
     pdf.cell(90, 6, f"Date: {safe_text(display_date)}", 0, 1, 'R')
     
@@ -228,8 +220,11 @@ def generate_invoice_pdf(row_data, totals, invoice_date):
     aline("Total Commission HT", totals['comm_ht'])
     aline("TVA 20%", totals['tva'])
     aline("Total Facture TTC", totals['inv_ttc'], True)
+    # AJOUT : Ligne Total du panier comme sur le modèle
+    aline("Total du panier", totals['sales'])
     pdf.ln(2)
-    aline("NET A PAYER PARTENAIRE", totals['net_pay'], True, True)
+    # MODIFICATION : Libellé "Total à payer TTC"
+    aline("Total à payer TTC", totals['net_pay'], True, True)
     
     # ARRETÉ DE COMPTE EN LETTRES
     pdf.set_y(165)
@@ -238,14 +233,14 @@ def generate_invoice_pdf(row_data, totals, invoice_date):
     
     try:
         amount_to_word = totals['net_pay']
-        # Arrondi à 2 décimales pour éviter les erreurs d'arrondi flottant dans num2words
         amount_to_word = round(amount_to_word, 2)
         text_amount = num2words(amount_to_word, lang='fr', to='currency', currency='DH').upper()
         text_amount = text_amount.replace('EURO', 'DIRHAM').replace('EUROS', 'DIRHAMS')
     except:
         text_amount = f"{totals['net_pay']:,.2f} DIRHAMS"
 
-    pdf.multi_cell(0, 5, f"Arrete la presente facture a la somme de : {safe_text(text_amount)} (NET A PAYER PARTENAIRE)", 0, 'L')
+    # MODIFICATION : Mise à jour du texte pour correspondre au libellé
+    pdf.multi_cell(0, 5, f"Arrete la presente facture a la somme de : {safe_text(text_amount)} (Total à payer TTC)", 0, 'L')
     
     rib = str(row_data.get('RIB', ''))
     if len(rib) > 5 and 'nan' not in rib.lower():
@@ -305,14 +300,15 @@ if uploaded_file:
                         count = 0
                         for index, row in df_to_process.iterrows():
                             try:
-                                # 1. CALCULS
-                                sales = clean_currency(row.get('Item total', 0))
+                                # 1. CALCULS CORRIGÉS SELON LE MODÈLE
+                                sales = clean_currency(row.get('Item total', 0)) # Correspond à "Total du panier"
                                 comm_ht = clean_currency(row.get('Commission YASSIR', 0))
                                 
                                 tva = comm_ht * 0.20
                                 ttc = comm_ht + tva
-                                net_pay_initial = sales - ttc
-                                net_pay_final = net_pay_initial + tva
+                                
+                                # Correction : Net = Ventes - (Comm HT + TVA) = Ventes - TTC
+                                net_pay_final = sales - ttc
                                 
                                 totals = {
                                     'sales': sales, 
