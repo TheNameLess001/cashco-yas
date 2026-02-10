@@ -173,8 +173,8 @@ def generate_invoice_pdf(row_data, totals, invoice_date):
     pdf.set_font('Arial', 'B', 9)
     
     cols = [60, 40, 40, 50]
-    # En-têtes : on précise que c'est du HT
-    hd = ['Periode', 'Note Debours (HT)', 'Taux Comm.', 'Commission HT']
+    # MODIFICATION : En-tête simplifié pour "Note Debours" (sous-entendu TTC à l'affichage)
+    hd = ['Periode', 'Note Debours', 'Taux Comm.', 'Commission HT']
     for i,h in enumerate(hd): 
         pdf.cell(cols[i], 10, safe_text(h), 1, 0, 'C', 1)
     
@@ -187,14 +187,12 @@ def generate_invoice_pdf(row_data, totals, invoice_date):
     period_val = str(row_data.get('Période', ''))
     
     # Récupération taux pour affichage pourcentage
-    # (Le calcul réel s'est fait dans la boucle principale, ici c'est juste cosmétique)
     raw_rate = row_data.get('Taux de commission', '0')
     try:
         if pd.isna(raw_rate):
             rate_val_disp = "0"
         else:
             rate_float = float(str(raw_rate).replace('%', '').replace(',', '.'))
-            # Si c'est 0.12 -> on affiche 12
             if rate_float < 1.0 and rate_float != 0: 
                 rate_float *= 100
             rate_val_disp = f"{rate_float:g}"
@@ -202,10 +200,9 @@ def generate_invoice_pdf(row_data, totals, invoice_date):
         rate_val_disp = "0"
     
     pdf.cell(cols[0], 10, safe_text(period_val), 1, 0, 'C')
-    # Affiche le HT dans la colonne Note Debours
-    pdf.cell(cols[1], 10, f"{totals['sales_ht']:,.2f}", 1, 0, 'C')
+    # MODIFICATION : On affiche le montant TTC ici (totals['sales_ttc'])
+    pdf.cell(cols[1], 10, f"{totals['sales_ttc']:,.2f}", 1, 0, 'C')
     pdf.cell(cols[2], 10, f"{rate_val_disp}%", 1, 0, 'C')
-    # Affiche la commission calculée
     pdf.cell(cols[3], 10, f"{totals['comm_ht']:,.2f}", 1, 1, 'C')
     
     pdf.ln(8)
@@ -228,7 +225,7 @@ def generate_invoice_pdf(row_data, totals, invoice_date):
     aline("TVA 20%", totals['tva'])
     aline("Total Facture TTC", totals['inv_ttc'], True)
     
-    # Affiche le Total TTC du panier (Item total original)
+    # Affiche le Total TTC du panier
     aline("Total du panier", totals['sales_ttc'])
     pdf.ln(2)
     aline("Total à payer TTC", totals['net_pay'], True, True)
@@ -269,7 +266,6 @@ if uploaded_file:
         df.columns = df.columns.str.strip()
         
         # Vérification des colonnes
-        # On a besoin de 'Item total' (Ventes TTC) et 'Taux de commission'
         required_cols = ['Restaurant name', 'Item total', 'Facture N°', 'Date du virement']
         missing = [c for c in required_cols if c not in df.columns]
         
@@ -306,9 +302,9 @@ if uploaded_file:
                         count = 0
                         for index, row in df_to_process.iterrows():
                             try:
-                                # 1. VENTES TTC & HT
+                                # 1. VENTES TTC & HT (CALCULS)
                                 sales_ttc = clean_currency(row.get('Item total', 0))
-                                sales_ht = sales_ttc / 1.2 # Base HT
+                                sales_ht = sales_ttc / 1.2 # Base HT utilisée pour le calcul
                                 
                                 # 2. RECUPERATION & NETTOYAGE TAUX
                                 raw_rate = row.get('Taux de commission', 0)
@@ -317,8 +313,6 @@ if uploaded_file:
                                     if not pd.isna(raw_rate):
                                         s_rate = str(raw_rate).replace('%', '').replace(',', '.').strip()
                                         val = float(s_rate)
-                                        # Si > 1 (ex: 12), on considère que c'est 12%. Si <= 1 (ex: 0.12), c'est 12%.
-                                        # Attention au cas 0.
                                         if val > 1.0: 
                                             rate_decimal = val / 100.0
                                         else:
@@ -326,7 +320,7 @@ if uploaded_file:
                                 except:
                                     rate_decimal = 0.0
                                 
-                                # 3. CALCUL COMMISSION HT
+                                # 3. CALCUL COMMISSION HT (Toujours basé sur sales_ht)
                                 comm_ht = sales_ht * rate_decimal
                                 
                                 # 4. CALCULS FINAUX
@@ -335,7 +329,7 @@ if uploaded_file:
                                 net_pay_final = sales_ttc - ttc
                                 
                                 totals = {
-                                    'sales_ttc': sales_ttc,
+                                    'sales_ttc': sales_ttc, # Sera affiché dans "Note Debours" et "Total Panier"
                                     'sales_ht': sales_ht,
                                     'comm_ht': comm_ht, 
                                     'tva': tva, 
