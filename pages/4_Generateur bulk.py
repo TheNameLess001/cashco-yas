@@ -67,7 +67,6 @@ def format_date_virement(date_val):
             return date_val.strftime('%d/%m/%Y')
         
         d_str = str(date_val).strip()
-        
         if " " in d_str:
             d_str = d_str.split(" ")[0]
             
@@ -220,7 +219,7 @@ def generate_invoice_pdf(row_data, totals, invoice_date):
     aline("Total Commission HT", totals['comm_ht'])
     aline("TVA 20%", totals['tva'])
     aline("Total Facture TTC", totals['inv_ttc'], True)
-    # AJOUT : Ligne Total du panier comme sur le modèle
+    # AJOUT : Ligne "Total du panier" (Sales)
     aline("Total du panier", totals['sales'])
     pdf.ln(2)
     # MODIFICATION : Libellé "Total à payer TTC"
@@ -300,14 +299,16 @@ if uploaded_file:
                         count = 0
                         for index, row in df_to_process.iterrows():
                             try:
-                                # 1. CALCULS CORRIGÉS SELON LE MODÈLE
-                                sales = clean_currency(row.get('Item total', 0)) # Correspond à "Total du panier"
+                                # 1. CALCULS CORRIGÉS SELON L'EXEMPLE CSV
+                                # Item total = Total du panier (Sales)
+                                sales = clean_currency(row.get('Item total', 0))
                                 comm_ht = clean_currency(row.get('Commission YASSIR', 0))
                                 
                                 tva = comm_ht * 0.20
                                 ttc = comm_ht + tva
                                 
-                                # Correction : Net = Ventes - (Comm HT + TVA) = Ventes - TTC
+                                # Correction : Net à payer = Total du panier - Total Facture TTC (Comm+TVA)
+                                # (Ex: 794 - 95.28 = 698.72)
                                 net_pay_final = sales - ttc
                                 
                                 totals = {
