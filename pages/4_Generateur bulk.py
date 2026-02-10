@@ -173,7 +173,8 @@ def generate_invoice_pdf(row_data, totals, invoice_date):
     pdf.set_font('Arial', 'B', 9)
     
     cols = [60, 40, 40, 50]
-    hd = ['Periode', 'Note Debours', 'Taux Comm.', 'Commission HT']
+    # MODIFICATION : Intitulé plus précis si nécessaire, sinon 'Note Debours' est standard
+    hd = ['Periode', 'Note Debours (HT)', 'Taux Comm.', 'Commission HT']
     for i,h in enumerate(hd): 
         pdf.cell(cols[i], 10, safe_text(h), 1, 0, 'C', 1)
     
@@ -196,7 +197,8 @@ def generate_invoice_pdf(row_data, totals, invoice_date):
         rate_val = "0"
     
     pdf.cell(cols[0], 10, safe_text(period_val), 1, 0, 'C')
-    pdf.cell(cols[1], 10, f"{totals['sales']:,.2f}", 1, 0, 'C')
+    # MODIFICATION : Affiche le montant HT dans la colonne Note Debours
+    pdf.cell(cols[1], 10, f"{totals['sales_ht']:,.2f}", 1, 0, 'C')
     pdf.cell(cols[2], 10, f"{rate_val}%", 1, 0, 'C')
     pdf.cell(cols[3], 10, f"{totals['comm_ht']:,.2f}", 1, 1, 'C')
     
@@ -219,7 +221,7 @@ def generate_invoice_pdf(row_data, totals, invoice_date):
     aline("Total Commission HT", totals['comm_ht'])
     aline("TVA 20%", totals['tva'])
     aline("Total Facture TTC", totals['inv_ttc'], True)
-    # AJOUT : Ligne "Total du panier" (Sales)
+    # AJOUT : Ligne Total du panier (TTC)
     aline("Total du panier", totals['sales'])
     pdf.ln(2)
     # MODIFICATION : Libellé "Total à payer TTC"
@@ -238,7 +240,6 @@ def generate_invoice_pdf(row_data, totals, invoice_date):
     except:
         text_amount = f"{totals['net_pay']:,.2f} DIRHAMS"
 
-    # MODIFICATION : Mise à jour du texte pour correspondre au libellé
     pdf.multi_cell(0, 5, f"Arrete la presente facture a la somme de : {safe_text(text_amount)} (Total à payer TTC)", 0, 'L')
     
     rib = str(row_data.get('RIB', ''))
@@ -299,20 +300,21 @@ if uploaded_file:
                         count = 0
                         for index, row in df_to_process.iterrows():
                             try:
-                                # 1. CALCULS CORRIGÉS SELON L'EXEMPLE CSV
-                                # Item total = Total du panier (Sales)
-                                sales = clean_currency(row.get('Item total', 0))
+                                # 1. CALCULS ADAPTÉS
+                                sales_ttc = clean_currency(row.get('Item total', 0)) # Item total est TTC
+                                sales_ht = sales_ttc / 1.2 # Calcul du HT pour la base de commission (TVA 20%)
+                                
                                 comm_ht = clean_currency(row.get('Commission YASSIR', 0))
                                 
                                 tva = comm_ht * 0.20
                                 ttc = comm_ht + tva
                                 
-                                # Correction : Net à payer = Total du panier - Total Facture TTC (Comm+TVA)
-                                # (Ex: 794 - 95.28 = 698.72)
-                                net_pay_final = sales - ttc
+                                # Net = Ventes TTC - (Commission HT + TVA Commission)
+                                net_pay_final = sales_ttc - ttc
                                 
                                 totals = {
-                                    'sales': sales, 
+                                    'sales': sales_ttc,   # Pour "Total du panier"
+                                    'sales_ht': sales_ht, # Pour "Note Debours" dans le tableau
                                     'comm_ht': comm_ht, 
                                     'tva': tva, 
                                     'inv_ttc': ttc, 
