@@ -105,7 +105,7 @@ class PDFTemplate(FPDF):
         self.set_font('Arial', 'B', 8)
         self.cell(0, 10, f'Page {self.page_no()}/{{nb}}', 0, 0, 'R')
 
-def generate_invoice_pdf(row_data, totals, invoice_date, invoice_type='commission'):
+def generate_invoice_pdf(row_data, totals, invoice_date, invoice_type='grouped'):
     pdf = PDFTemplate()
     pdf.alias_nb_pages()
     pdf.add_page()
@@ -118,9 +118,12 @@ def generate_invoice_pdf(row_data, totals, invoice_date, invoice_type='commissio
     if invoice_type == 'commission':
         doc_title = "FACTURE COMMISSION"
         doc_suffix = "-C"
-    else:
+    elif invoice_type == 'debours':
         doc_title = "NOTE DE DÉBOURS"
         doc_suffix = "-D"
+    else:
+        doc_title = "FACTURE"
+        doc_suffix = ""
         
     pdf.cell(90, 8, doc_title, 0, 1, 'R')
     
@@ -164,7 +167,7 @@ def generate_invoice_pdf(row_data, totals, invoice_date, invoice_type='commissio
             pdf.set_xy(16, current_y + 1)
             pdf.cell(80, 5, f"ICE: {safe_text(ice_str)}", 0, 1, 'L')
             
-    # --- TABLEAU (Même design avec 4 colonnes pour les deux documents) ---
+    # --- TABLEAU ---
     pdf.set_y(100)
     pdf.set_fill_color(*YASSIR_RGB)
     pdf.set_draw_color(*YASSIR_RGB)
@@ -177,10 +180,14 @@ def generate_invoice_pdf(row_data, totals, invoice_date, invoice_type='commissio
         hd = ['Periode', 'Base Calcul (HT)', 'Taux Comm.', 'Commission HT']
         val_col1 = totals['sales_ht']
         val_col3 = totals['comm_ht']
-    else:
+    elif invoice_type == 'debours':
         hd = ['Periode', 'Ventes (TTC)', 'Taux Comm.', 'Commission (TTC)']
         val_col1 = totals['sales_ttc']
         val_col3 = totals['inv_ttc']
+    else: # grouped
+        hd = ['Periode', 'Note Debours', 'Taux Comm.', 'Commission HT']
+        val_col1 = totals['sales_ttc']
+        val_col3 = totals['comm_ht']
         
     for i,h in enumerate(hd): 
         pdf.cell(cols[i], 10, safe_text(h), 1, 0, 'C', 1)
@@ -232,9 +239,18 @@ def generate_invoice_pdf(row_data, totals, invoice_date, invoice_type='commissio
         aline("Total Facture TTC", totals['inv_ttc'], True, True)
         amount_to_word = totals['inv_ttc']
         word_label = "Total Facture TTC"
-    else:
+    elif invoice_type == 'debours':
         aline("Total du panier (TTC)", totals['sales_ttc'])
         aline("Deduction Yassir (TTC)", totals['inv_ttc']) 
+        aline("Total à payer TTC", totals['net_pay'], True, True)
+        amount_to_word = totals['net_pay']
+        word_label = "Total à payer TTC"
+    else: # grouped
+        aline("Total Commission HT", totals['comm_ht'])
+        aline("TVA 20%", totals['tva'])
+        aline("Total Facture TTC", totals['inv_ttc'], True)
+        aline("Total du panier", totals['sales_ttc'])
+        pdf.ln(2)
         aline("Total à payer TTC", totals['net_pay'], True, True)
         amount_to_word = totals['net_pay']
         word_label = "Total à payer TTC"
@@ -263,7 +279,14 @@ def generate_invoice_pdf(row_data, totals, invoice_date, invoice_type='commissio
 
 # --- INTERFACE ---
 st.title("📄 Édition Factures & Mise à jour Excel")
-st.info("Génère 2 documents identiques en design : Une Facture de Commission Yassir et une Note de Débours.")
+st.info("Sélectionnez le format souhaité pour générer vos documents.")
+
+# NOUVEAU : Option pour choisir le type de génération
+format_generation = st.radio(
+    "👉 Format de génération des documents :",
+    ["Regroupé (1 document par ligne)", "Séparé (2 documents : Facture Commission + Note Débours)"],
+    horizontal=True
+)
 
 uploaded_file = st.file_uploader("📂 Charger le fichier Excel (xlsx)", type=['xlsx'])
 
@@ -283,7 +306,7 @@ if uploaded_file:
             if df_to_process.empty:
                 st.warning("⚠️ Toutes les lignes sont déjà traitées.")
             else:
-                st.success(f"✅ {len(df_to_process)} factures prêtes.")
+                st.success(f"✅ {len(df_to_process)} lignes prêtes à être traitées.")
                 
                 c1, c2 = st.columns(2)
                 with c1:
@@ -344,15 +367,22 @@ if uploaded_file:
                                 row['ref'] = current_ref
                                 safe_name = clean_filename(row.get('Restaurant name', f'Client_{index}'))
                                 
-                                # GENERATION PDF 1 : FACTURE COMMISSION
-                                pdf_comm = generate_invoice_pdf(row, totals, invoice_date, 'commission')
-                                file_comm = f"{current_ref}-C_Facture_Commission_{safe_name}.pdf"
-                                zip_file.writestr(file_comm, pdf_comm)
+                                # CONDITION SELON LE CHOIX DE L'UTILISATEUR
+                                if "Séparé" in format_generation:
+                                    # GENERATION PDF 1 : FACTURE COMMISSION
+                                    pdf_comm = generate_invoice_pdf(row, totals, invoice_date, 'commission')
+                                    file_comm = f"{current_ref}-C_Facture_Commission_{safe_name}.pdf"
+                                    zip_file.writestr(file_comm, pdf_comm)
 
-                                # GENERATION PDF 2 : NOTE DE DEBOURS
-                                pdf_debours = generate_invoice_pdf(row, totals, invoice_date, 'debours')
-                                file_debours = f"{current_ref}-D_Note_Debours_{safe_name}.pdf"
-                                zip_file.writestr(file_debours, pdf_debours)
+                                    # GENERATION PDF 2 : NOTE DE DEBOURS
+                                    pdf_debours = generate_invoice_pdf(row, totals, invoice_date, 'debours')
+                                    file_debours = f"{current_ref}-D_Note_Debours_{safe_name}.pdf"
+                                    zip_file.writestr(file_debours, pdf_debours)
+                                else:
+                                    # GENERATION PDF REGROUPÉ : FACTURE GLOBALE
+                                    pdf_grouped = generate_invoice_pdf(row, totals, invoice_date, 'grouped')
+                                    file_grouped = f"{current_ref}_Facture_{safe_name}.pdf"
+                                    zip_file.writestr(file_grouped, pdf_grouped)
                                 
                                 count += 1
                                 my_bar.progress(int((count / len(df_to_process)) * 100))
@@ -361,7 +391,7 @@ if uploaded_file:
                                 st.error(f"Erreur ligne {index}: {e}")
 
                     my_bar.empty()
-                    st.success(f"🎉 Terminé ! {count*2} documents générés dans l'archive zip.")
+                    st.success(f"🎉 Terminé ! Les documents ont été générés dans l'archive zip.")
                     
                     st.markdown("---")
                     col_zip, col_xls = st.columns(2)
