@@ -119,8 +119,8 @@ def generate_invoice_pdf(row_data, totals, invoice_date, invoice_type='commissio
         doc_title = "FACTURE COMMISSION"
         doc_suffix = "-C"
     else:
-        doc_title = "RÉCAPITULATIF VENTES"
-        doc_suffix = "-V"
+        doc_title = "NOTE DE DÉBOURS"
+        doc_suffix = "-D"
         
     pdf.cell(90, 8, doc_title, 0, 1, 'R')
     
@@ -164,64 +164,50 @@ def generate_invoice_pdf(row_data, totals, invoice_date, invoice_type='commissio
             pdf.set_xy(16, current_y + 1)
             pdf.cell(80, 5, f"ICE: {safe_text(ice_str)}", 0, 1, 'L')
             
-    # --- TABLEAU ---
+    # --- TABLEAU (Même design avec 4 colonnes pour les deux documents) ---
     pdf.set_y(100)
     pdf.set_fill_color(*YASSIR_RGB)
     pdf.set_draw_color(*YASSIR_RGB)
     pdf.set_text_color(255)
     pdf.set_font('Arial', 'B', 9)
     
+    cols = [60, 40, 40, 50]
+    
+    if invoice_type == 'commission':
+        hd = ['Periode', 'Base Calcul (HT)', 'Taux Comm.', 'Commission HT']
+        val_col1 = totals['sales_ht']
+        val_col3 = totals['comm_ht']
+    else:
+        hd = ['Periode', 'Ventes (TTC)', 'Taux Comm.', 'Commission (TTC)']
+        val_col1 = totals['sales_ttc']
+        val_col3 = totals['inv_ttc']
+        
+    for i,h in enumerate(hd): 
+        pdf.cell(cols[i], 10, safe_text(h), 1, 0, 'C', 1)
+    
+    pdf.ln()
+    pdf.set_draw_color(200)
+    pdf.set_text_color(0)
+    pdf.set_font('Arial', '', 9)
+    
     period_val = str(row_data.get('Période', ''))
     
-    # FORMATTAGE SELON LE TYPE
-    if invoice_type == 'commission':
-        cols = [60, 40, 40, 50]
-        hd = ['Periode', 'Base Calcul (HT)', 'Taux Comm.', 'Commission HT']
-        for i,h in enumerate(hd): 
-            pdf.cell(cols[i], 10, safe_text(h), 1, 0, 'C', 1)
-        pdf.ln()
-        
-        pdf.set_draw_color(200)
-        pdf.set_text_color(0)
-        pdf.set_font('Arial', '', 9)
-        
-        raw_rate = row_data.get('Taux de commission', '0')
-        try:
-            if pd.isna(raw_rate):
-                rate_val_disp = "0"
-            else:
-                rate_float = float(str(raw_rate).replace('%', '').replace(',', '.'))
-                if rate_float < 1.0 and rate_float != 0: 
-                    rate_float *= 100
-                rate_val_disp = f"{rate_float:g}"
-        except:
+    raw_rate = row_data.get('Taux de commission', '0')
+    try:
+        if pd.isna(raw_rate):
             rate_val_disp = "0"
-            
-        pdf.cell(cols[0], 10, safe_text(period_val), 1, 0, 'C')
-        pdf.cell(cols[1], 10, f"{totals['sales_ht']:,.2f}", 1, 0, 'C')
-        pdf.cell(cols[2], 10, f"{rate_val_disp}%", 1, 0, 'C')
-        pdf.cell(cols[3], 10, f"{totals['comm_ht']:,.2f}", 1, 1, 'C')
+        else:
+            rate_float = float(str(raw_rate).replace('%', '').replace(',', '.'))
+            if rate_float < 1.0 and rate_float != 0: 
+                rate_float *= 100
+            rate_val_disp = f"{rate_float:g}"
+    except:
+        rate_val_disp = "0"
         
-        amount_to_word = totals['inv_ttc']
-        word_label = "Total Facture TTC"
-        
-    else:
-        # Configuration VENTES / ITEM TOTAL
-        cols = [95, 95]
-        hd = ['Periode', 'Total du Panier (Ventes TTC)']
-        for i,h in enumerate(hd): 
-            pdf.cell(cols[i], 10, safe_text(h), 1, 0, 'C', 1)
-        pdf.ln()
-        
-        pdf.set_draw_color(200)
-        pdf.set_text_color(0)
-        pdf.set_font('Arial', '', 9)
-        
-        pdf.cell(cols[0], 10, safe_text(period_val), 1, 0, 'C')
-        pdf.cell(cols[1], 10, f"{totals['sales_ttc']:,.2f}", 1, 1, 'C')
-        
-        amount_to_word = totals['net_pay']
-        word_label = "Total à payer TTC"
+    pdf.cell(cols[0], 10, safe_text(period_val), 1, 0, 'C')
+    pdf.cell(cols[1], 10, f"{val_col1:,.2f}", 1, 0, 'C')
+    pdf.cell(cols[2], 10, f"{rate_val_disp}%", 1, 0, 'C')
+    pdf.cell(cols[3], 10, f"{val_col3:,.2f}", 1, 1, 'C')
 
     # --- TOTAUX (Lignes du bas) ---
     pdf.ln(8)
@@ -244,10 +230,14 @@ def generate_invoice_pdf(row_data, totals, invoice_date, invoice_type='commissio
         aline("Total Commission HT", totals['comm_ht'])
         aline("TVA 20%", totals['tva'])
         aline("Total Facture TTC", totals['inv_ttc'], True, True)
+        amount_to_word = totals['inv_ttc']
+        word_label = "Total Facture TTC"
     else:
         aline("Total du panier (TTC)", totals['sales_ttc'])
-        aline("Commission Yassir (TTC)", totals['inv_ttc']) # On l'affiche pour justifier la déduction
+        aline("Deduction Yassir (TTC)", totals['inv_ttc']) 
         aline("Total à payer TTC", totals['net_pay'], True, True)
+        amount_to_word = totals['net_pay']
+        word_label = "Total à payer TTC"
     
     # --- ARRETÉ DE COMPTE ---
     pdf.set_y(165)
@@ -273,7 +263,7 @@ def generate_invoice_pdf(row_data, totals, invoice_date, invoice_type='commissio
 
 # --- INTERFACE ---
 st.title("📄 Édition Factures & Mise à jour Excel")
-st.info("Génère 2 documents par ligne : Une Facture de Commission Yassir et un Récapitulatif Ventes.")
+st.info("Génère 2 documents identiques en design : Une Facture de Commission Yassir et une Note de Débours.")
 
 uploaded_file = st.file_uploader("📂 Charger le fichier Excel (xlsx)", type=['xlsx'])
 
@@ -313,7 +303,7 @@ if uploaded_file:
                         count = 0
                         for index, row in df_to_process.iterrows():
                             try:
-                                # 1. VENTES TTC & HT (CALCULS RESTÉS IDENTIQUES)
+                                # 1. VENTES TTC & HT
                                 sales_ttc = clean_currency(row.get('Item total', 0))
                                 sales_ht = sales_ttc / 1.2 
                                 
@@ -359,10 +349,10 @@ if uploaded_file:
                                 file_comm = f"{current_ref}-C_Facture_Commission_{safe_name}.pdf"
                                 zip_file.writestr(file_comm, pdf_comm)
 
-                                # GENERATION PDF 2 : RÉCAPITULATIF VENTES (ITEM TOTAL)
-                                pdf_ventes = generate_invoice_pdf(row, totals, invoice_date, 'item_total')
-                                file_ventes = f"{current_ref}-V_Recap_Ventes_{safe_name}.pdf"
-                                zip_file.writestr(file_ventes, pdf_ventes)
+                                # GENERATION PDF 2 : NOTE DE DEBOURS
+                                pdf_debours = generate_invoice_pdf(row, totals, invoice_date, 'debours')
+                                file_debours = f"{current_ref}-D_Note_Debours_{safe_name}.pdf"
+                                zip_file.writestr(file_debours, pdf_debours)
                                 
                                 count += 1
                                 my_bar.progress(int((count / len(df_to_process)) * 100))
