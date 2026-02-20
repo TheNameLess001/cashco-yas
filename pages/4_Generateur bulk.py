@@ -6,7 +6,7 @@ from datetime import datetime
 import os
 import zipfile
 import io
-import re
+import tempfile
 from num2words import num2words 
 
 # --- CONFIGURATION DU THÈME ---
@@ -105,7 +105,7 @@ class PDFTemplate(FPDF):
         self.set_font('Arial', 'B', 8)
         self.cell(0, 10, f'Page {self.page_no()}/{{nb}}', 0, 0, 'R')
 
-def generate_invoice_pdf(row_data, totals, invoice_date, invoice_type='grouped'):
+def generate_invoice_pdf(row_data, totals, invoice_date, invoice_type, invoice_ref, signature_path=None):
     pdf = PDFTemplate()
     pdf.alias_nb_pages()
     pdf.add_page()
@@ -117,21 +117,18 @@ def generate_invoice_pdf(row_data, totals, invoice_date, invoice_type='grouped')
     
     if invoice_type == 'commission':
         doc_title = "FACTURE COMMISSION"
-        doc_suffix = "-C"
     elif invoice_type == 'debours':
         doc_title = "NOTE DE DÉBOURS"
-        doc_suffix = "-D"
     else:
         doc_title = "FACTURE"
-        doc_suffix = ""
         
     pdf.cell(90, 8, doc_title, 0, 1, 'R')
     
-    # Info Facture
+    # Info Facture avec référence explicite
     pdf.set_x(110)
     pdf.set_font('Arial', 'B', 10)
     pdf.set_text_color(0)
-    pdf.cell(90, 6, f"N: {safe_text(row_data['ref'])}{doc_suffix}", 0, 1, 'R')
+    pdf.cell(90, 6, f"N: {safe_text(invoice_ref)}", 0, 1, 'R')
     
     # DATE FACTURE
     pdf.set_x(110)
@@ -275,18 +272,34 @@ def generate_invoice_pdf(row_data, totals, invoice_date, invoice_type='grouped')
         pdf.set_font('Arial', '', 8)
         pdf.cell(0, 5, f"RIB Paiement : {rib}", 0, 1, 'L')
 
+    # --- SIGNATURE / CACHET ---
+    if signature_path and os.path.exists(signature_path):
+        y_pos = pdf.get_y() + 5
+        # Si on est trop bas sur la page, on ajoute une nouvelle page
+        if y_pos > 250:
+            pdf.add_page()
+            y_pos = 20
+        # Positionné en bas à droite
+        pdf.image(signature_path, x=150, y=y_pos, w=40)
+
     return pdf.output(dest='S').encode('latin-1', errors='replace')
 
 # --- INTERFACE ---
 st.title("📄 Édition Factures & Mise à jour Excel")
 st.info("Sélectionnez le format souhaité pour générer vos documents.")
 
-# NOUVEAU : Option pour choisir le type de génération
-format_generation = st.radio(
-    "👉 Format de génération des documents :",
-    ["Regroupé (1 document par ligne)", "Séparé (2 documents : Facture Commission + Note Débours)"],
-    horizontal=True
-)
+col_options1, col_options2 = st.columns(2)
+
+with col_options1:
+    format_generation = st.radio(
+        "👉 Format de génération :",
+        ["Regroupé (1 document par ligne)", "Séparé (2 documents : Facture Commission + Note Débours)"],
+        horizontal=False
+    )
+
+with col_options2:
+    st.markdown("✍️ **Cachet et Signature (Optionnel)**")
+    signature_file = st.file_uploader("Uploader une image (PNG ou JPG)", type=['png', 'jpg', 'jpeg'])
 
 uploaded_file = st.file_uploader("📂 Charger le fichier Excel (xlsx)", type=['xlsx'])
 
@@ -317,108 +330,136 @@ if uploaded_file:
                 
                 if st.button("🚀 GÉNÉRER (PDF + EXCEL)"):
                     
+                    # 1. GESTION DE LA SIGNATURE TEMPORAIRE
+                    signature_path = None
+                    if signature_file:
+                        try:
+                            # Utilisation de l'extension originale
+                            ext = "." + signature_file.name.split(".")[-1]
+                            with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+                                tmp.write(signature_file.getvalue())
+                                signature_path = tmp.name
+                        except Exception as e:
+                            st.warning(f"Impossible de charger la signature : {e}")
+
                     zip_buffer = io.BytesIO()
                     progress_text = "Génération des documents en cours..."
                     my_bar = st.progress(0, text=progress_text)
                     
-                    with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
-                        
-                        count = 0
-                        for index, row in df_to_process.iterrows():
-                            try:
-                                # 1. VENTES TTC & HT
-                                sales_ttc = clean_currency(row.get('Item total', 0))
-                                sales_ht = sales_ttc / 1.2 
-                                
-                                raw_rate = row.get('Taux de commission', 0)
-                                rate_decimal = 0.0
+                    try:
+                        with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
+                            
+                            count = 0
+                            for index, row in df_to_process.iterrows():
                                 try:
-                                    if not pd.isna(raw_rate):
-                                        s_rate = str(raw_rate).replace('%', '').replace(',', '.').strip()
-                                        val = float(s_rate)
-                                        if val > 1.0: 
-                                            rate_decimal = val / 100.0
-                                        else:
-                                            rate_decimal = val
-                                except:
+                                    # VENTES TTC & HT
+                                    sales_ttc = clean_currency(row.get('Item total', 0))
+                                    sales_ht = sales_ttc / 1.2 
+                                    
+                                    raw_rate = row.get('Taux de commission', 0)
                                     rate_decimal = 0.0
-                                
-                                comm_ht = sales_ht * rate_decimal
-                                tva = comm_ht * 0.20
-                                ttc = comm_ht + tva
-                                net_pay_final = sales_ttc - ttc
-                                
-                                totals = {
-                                    'sales_ttc': sales_ttc,
-                                    'sales_ht': sales_ht,
-                                    'comm_ht': comm_ht, 
-                                    'tva': tva, 
-                                    'inv_ttc': ttc, 
-                                    'net_pay': net_pay_final
-                                }
-                                
-                                raw_date_virement = row.get('Date du virement', '')
-                                invoice_date = format_date_virement(raw_date_virement)
-                                
-                                current_seq = start_idx + count
-                                current_ref = f"{current_seq}-{date_suffix}YAS"
-                                
-                                df.at[index, 'Facture N°'] = current_ref
-                                row['ref'] = current_ref
-                                safe_name = clean_filename(row.get('Restaurant name', f'Client_{index}'))
-                                
-                                # CONDITION SELON LE CHOIX DE L'UTILISATEUR
-                                if "Séparé" in format_generation:
-                                    # GENERATION PDF 1 : FACTURE COMMISSION
-                                    pdf_comm = generate_invoice_pdf(row, totals, invoice_date, 'commission')
-                                    file_comm = f"{current_ref}-C_Facture_Commission_{safe_name}.pdf"
-                                    zip_file.writestr(file_comm, pdf_comm)
+                                    try:
+                                        if not pd.isna(raw_rate):
+                                            s_rate = str(raw_rate).replace('%', '').replace(',', '.').strip()
+                                            val = float(s_rate)
+                                            if val > 1.0: 
+                                                rate_decimal = val / 100.0
+                                            else:
+                                                rate_decimal = val
+                                    except:
+                                        rate_decimal = 0.0
+                                    
+                                    comm_ht = sales_ht * rate_decimal
+                                    tva = comm_ht * 0.20
+                                    ttc = comm_ht + tva
+                                    net_pay_final = sales_ttc - ttc
+                                    
+                                    totals = {
+                                        'sales_ttc': sales_ttc,
+                                        'sales_ht': sales_ht,
+                                        'comm_ht': comm_ht, 
+                                        'tva': tva, 
+                                        'inv_ttc': ttc, 
+                                        'net_pay': net_pay_final
+                                    }
+                                    
+                                    raw_date_virement = row.get('Date du virement', '')
+                                    invoice_date = format_date_virement(raw_date_virement)
+                                    
+                                    current_seq = start_idx + count
+                                    base_ref = f"{current_seq}-{date_suffix}YAS"
+                                    safe_name = clean_filename(row.get('Restaurant name', f'Client_{index}'))
+                                    
+                                    # CONDITION SELON LE CHOIX DE L'UTILISATEUR
+                                    if "Séparé" in format_generation:
+                                        # Références explicites
+                                        ref_comm = f"{base_ref}-COMMISSION"
+                                        ref_deb = f"{base_ref}-NOTE-DEBOURS"
+                                        
+                                        # On trace les deux dans l'Excel
+                                        df.at[index, 'Facture N°'] = f"{ref_comm}  /  {ref_deb}"
+                                        
+                                        # GENERATION PDF 1 : FACTURE COMMISSION
+                                        pdf_comm = generate_invoice_pdf(row, totals, invoice_date, 'commission', ref_comm, signature_path)
+                                        file_comm = f"{ref_comm}_{safe_name}.pdf"
+                                        zip_file.writestr(file_comm, pdf_comm)
 
-                                    # GENERATION PDF 2 : NOTE DE DEBOURS
-                                    pdf_debours = generate_invoice_pdf(row, totals, invoice_date, 'debours')
-                                    file_debours = f"{current_ref}-D_Note_Debours_{safe_name}.pdf"
-                                    zip_file.writestr(file_debours, pdf_debours)
-                                else:
-                                    # GENERATION PDF REGROUPÉ : FACTURE GLOBALE
-                                    pdf_grouped = generate_invoice_pdf(row, totals, invoice_date, 'grouped')
-                                    file_grouped = f"{current_ref}_Facture_{safe_name}.pdf"
-                                    zip_file.writestr(file_grouped, pdf_grouped)
-                                
-                                count += 1
-                                my_bar.progress(int((count / len(df_to_process)) * 100))
-                                
-                            except Exception as e:
-                                st.error(f"Erreur ligne {index}: {e}")
+                                        # GENERATION PDF 2 : NOTE DE DEBOURS
+                                        pdf_debours = generate_invoice_pdf(row, totals, invoice_date, 'debours', ref_deb, signature_path)
+                                        file_debours = f"{ref_deb}_{safe_name}.pdf"
+                                        zip_file.writestr(file_debours, pdf_debours)
+                                    else:
+                                        # GENERATION PDF REGROUPÉ : FACTURE GLOBALE
+                                        ref_grouped = base_ref
+                                        df.at[index, 'Facture N°'] = ref_grouped
+                                        
+                                        pdf_grouped = generate_invoice_pdf(row, totals, invoice_date, 'grouped', ref_grouped, signature_path)
+                                        file_grouped = f"{ref_grouped}_{safe_name}.pdf"
+                                        zip_file.writestr(file_grouped, pdf_grouped)
+                                    
+                                    count += 1
+                                    my_bar.progress(int((count / len(df_to_process)) * 100))
+                                    
+                                except Exception as e:
+                                    st.error(f"Erreur ligne {index}: {e}")
 
-                    my_bar.empty()
-                    st.success(f"🎉 Terminé ! Les documents ont été générés dans l'archive zip.")
-                    
-                    st.markdown("---")
-                    col_zip, col_xls = st.columns(2)
-                    
-                    b_zip = base64.b64encode(zip_buffer.getvalue()).decode()
-                    file_name_zip = f"Factures_{datetime.now().strftime('%Y%m%d')}.zip"
-                    col_zip.markdown(f'''
-                        <a href="data:application/zip;base64,{b_zip}" download="{file_name_zip}">
-                            <button style="background-color:{YASSIR_PURPLE}; color:white; border:none; padding:15px; border-radius:10px; width:100%; font-weight:bold; cursor:pointer;">
-                            📦 TÉLÉCHARGER LE ZIP DES PDF
-                            </button>
-                        </a>
-                    ''', unsafe_allow_html=True)
-                    
-                    excel_buffer = io.BytesIO()
-                    with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
-                        df.to_excel(writer, index=False, sheet_name='Suivi_Facturation')
+                        my_bar.empty()
+                        st.success(f"🎉 Terminé ! Les documents ont été générés dans l'archive zip.")
                         
-                    b_xls = base64.b64encode(excel_buffer.getvalue()).decode()
-                    file_name_xls = f"Suivi_Mis_a_Jour_{datetime.now().strftime('%Y%m%d')}.xlsx"
-                    col_xls.markdown(f'''
-                        <a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b_xls}" download="{file_name_xls}">
-                            <button style="background-color:#28a745; color:white; border:none; padding:15px; border-radius:10px; width:100%; font-weight:bold; cursor:pointer;">
-                            📊 TÉLÉCHARGER EXCEL MIS A JOUR
-                            </button>
-                        </a>
-                    ''', unsafe_allow_html=True)
+                        st.markdown("---")
+                        col_zip, col_xls = st.columns(2)
+                        
+                        b_zip = base64.b64encode(zip_buffer.getvalue()).decode()
+                        file_name_zip = f"Factures_{datetime.now().strftime('%Y%m%d')}.zip"
+                        col_zip.markdown(f'''
+                            <a href="data:application/zip;base64,{b_zip}" download="{file_name_zip}">
+                                <button style="background-color:{YASSIR_PURPLE}; color:white; border:none; padding:15px; border-radius:10px; width:100%; font-weight:bold; cursor:pointer;">
+                                📦 TÉLÉCHARGER LE ZIP DES PDF
+                                </button>
+                            </a>
+                        ''', unsafe_allow_html=True)
+                        
+                        excel_buffer = io.BytesIO()
+                        with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+                            df.to_excel(writer, index=False, sheet_name='Suivi_Facturation')
+                            
+                        b_xls = base64.b64encode(excel_buffer.getvalue()).decode()
+                        file_name_xls = f"Suivi_Mis_a_Jour_{datetime.now().strftime('%Y%m%d')}.xlsx"
+                        col_xls.markdown(f'''
+                            <a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b_xls}" download="{file_name_xls}">
+                                <button style="background-color:#28a745; color:white; border:none; padding:15px; border-radius:10px; width:100%; font-weight:bold; cursor:pointer;">
+                                📊 TÉLÉCHARGER EXCEL MIS A JOUR
+                                </button>
+                            </a>
+                        ''', unsafe_allow_html=True)
+
+                    finally:
+                        # Nettoyage du fichier temporaire de la signature
+                        if signature_path and os.path.exists(signature_path):
+                            try:
+                                os.remove(signature_path)
+                            except:
+                                pass
 
     except Exception as e:
         st.error(f"Erreur critique: {e}")
