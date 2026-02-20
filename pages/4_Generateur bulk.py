@@ -264,7 +264,8 @@ def generate_invoice_pdf(row_data, invoice_type, invoice_ref, signature_path=Non
         if y_pos > 250:
             pdf.add_page()
             y_pos = 20
-        pdf.image(signature_path, x=150, y=y_pos, w=40)
+        # MODIFICATION ICI : x=140 pour décaler un peu à gauche, et w=60 pour agrandir l'image (au lieu de 40)
+        pdf.image(signature_path, x=140, y=y_pos, w=60)
 
     return pdf.output(dest='S').encode('latin-1', errors='replace')
 
