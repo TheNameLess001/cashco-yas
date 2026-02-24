@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 YASSIR_PURPLE = "#6f42c1"
 YASSIR_RGB = (111, 66, 193)
 LOGO_PATH = "logo.png"
+CACHET_PATH = "cachet.png" # NOUVEAU : Chemin par défaut du cachet
 
 st.set_page_config(page_title="Générateur Factures Yassir", page_icon="📄", layout="wide")
 
@@ -264,7 +265,7 @@ def generate_invoice_pdf(row_data, invoice_type, invoice_ref, signature_path=Non
         if y_pos > 250:
             pdf.add_page()
             y_pos = 20
-        # MODIFICATION ICI : x=140 pour décaler un peu à gauche, et w=60 pour agrandir l'image (au lieu de 40)
+        # x=140 pour décaler un peu à gauche, w=60 pour la taille de l'image
         pdf.image(signature_path, x=140, y=y_pos, w=60)
 
     return pdf.output(dest='S').encode('latin-1', errors='replace')
@@ -306,8 +307,9 @@ with col_options1:
     )
 
 with col_options2:
-    st.markdown("✍️ **Cachet et Signature (Optionnel)**")
-    signature_file = st.file_uploader("Uploader une image (PNG ou JPG)", type=['png', 'jpg', 'jpeg'])
+    st.markdown("✍️ **Cachet et Signature**")
+    st.info("💡 Placez un fichier `cachet.png` dans le dossier pour l'utiliser par défaut, ou uploadez-en un ici.")
+    signature_file = st.file_uploader("Uploader une image (PNG ou JPG) pour écraser le défaut", type=['png', 'jpg', 'jpeg'])
 
 uploaded_file = st.file_uploader("📂 Charger le fichier Excel (xlsx)", type=['xlsx'])
 
@@ -338,7 +340,7 @@ if uploaded_file:
                 
                 if st.button("🚀 GÉNÉRER (PDF + EXCEL)"):
                     
-                    # Gestion Signature
+                    # Gestion Signature (Priorité Upload > Fichier cachet.png local)
                     signature_path = None
                     if signature_file:
                         try:
@@ -347,7 +349,9 @@ if uploaded_file:
                                 tmp.write(signature_file.getvalue())
                                 signature_path = tmp.name
                         except Exception as e:
-                            st.warning(f"Impossible de charger la signature : {e}")
+                            st.warning(f"Impossible de charger la signature uploadée : {e}")
+                    elif os.path.exists(CACHET_PATH):
+                        signature_path = CACHET_PATH
 
                     # 1. VECTORISATION PANDAS (Ultra-rapide)
                     df_to_process['sales_ttc'] = df_to_process['Item total'].apply(clean_currency)
@@ -431,7 +435,8 @@ if uploaded_file:
                         ''', unsafe_allow_html=True)
 
                     finally:
-                        if signature_path and os.path.exists(signature_path):
+                        # On supprime uniquement si on a créé un fichier temporaire
+                        if signature_file and signature_path and os.path.exists(signature_path):
                             try: os.remove(signature_path)
                             except: pass
 
