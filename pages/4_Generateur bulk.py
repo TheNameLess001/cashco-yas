@@ -8,7 +8,6 @@ import zipfile
 import io
 import tempfile
 from num2words import num2words 
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # --- CONFIGURATION DU THÈME ---
 YASSIR_PURPLE = "#6f42c1"
@@ -111,7 +110,7 @@ class PDFTemplate(FPDF):
         self.set_font('Arial', 'B', 8)
         self.cell(0, 10, f'Page {self.page_no()}/{{nb}}', 0, 0, 'R')
 
-def generate_invoice_pdf(row_data, invoice_type, invoice_ref, signature_path=None):
+def generate_invoice_pdf(row_data, totals, invoice_date, invoice_type, invoice_ref, signature_path=None):
     pdf = PDFTemplate()
     pdf.alias_nb_pages()
     pdf.add_page()
@@ -134,7 +133,8 @@ def generate_invoice_pdf(row_data, invoice_type, invoice_ref, signature_path=Non
     
     pdf.set_x(110)
     pdf.set_font('Arial', '', 10)
-    pdf.cell(90, 6, f"Date: {safe_text(row_data['Invoice Date Formatted'])}", 0, 1, 'R')
+    display_date = invoice_date if invoice_date else "-" 
+    pdf.cell(90, 6, f"Date: {safe_text(display_date)}", 0, 1, 'R')
     
     # --- BLOC DESTINATAIRE ---
     sy = 50
@@ -173,18 +173,17 @@ def generate_invoice_pdf(row_data, invoice_type, invoice_ref, signature_path=Non
     cols = [60, 40, 40, 50]
     
     if invoice_type == 'commission':
-        # MODIFICATION : Intitulé sans "HT" et valeur en TTC (sales_ttc)
         hd = ['Periode', 'Base de calcul', 'Taux Comm.', 'Commission HT']
-        val_col1 = row_data['sales_ttc']
-        val_col3 = row_data['comm_ht']
+        val_col1 = totals['sales_ttc']
+        val_col3 = totals['comm_ht']
     elif invoice_type == 'debours':
         hd = ['Periode', 'Ventes (TTC)', 'Taux Comm.', 'Commission (TTC)']
-        val_col1 = row_data['sales_ttc']
-        val_col3 = row_data['inv_ttc']
+        val_col1 = totals['sales_ttc']
+        val_col3 = totals['inv_ttc']
     else: # grouped
         hd = ['Periode', 'Note Debours', 'Taux Comm.', 'Commission HT']
-        val_col1 = row_data['sales_ttc']
-        val_col3 = row_data['comm_ht']
+        val_col1 = totals['sales_ttc']
+        val_col3 = totals['comm_ht']
         
     for i,h in enumerate(hd): 
         pdf.cell(cols[i], 10, safe_text(h), 1, 0, 'C', 1)
@@ -194,11 +193,23 @@ def generate_invoice_pdf(row_data, invoice_type, invoice_ref, signature_path=Non
     pdf.set_text_color(0)
     pdf.set_font('Arial', '', 9)
     
-    pdf.cell(cols[0], 10, safe_text(str(row_data.get('Période', ''))), 1, 0, 'C')
-    pdf.cell(cols[1], 10, f"{val_col1:,.2f}", 1, 0, 'C')
+    period_val = str(row_data.get('Période', ''))
     
-    rate_val = row_data['rate_decimal'] * 100 if row_data['rate_decimal'] else 0
-    pdf.cell(cols[2], 10, f"{rate_val:g}%", 1, 0, 'C')
+    raw_rate = row_data.get('Taux de commission', '0')
+    try:
+        if pd.isna(raw_rate):
+            rate_val_disp = "0"
+        else:
+            rate_float = float(str(raw_rate).replace('%', '').replace(',', '.'))
+            if rate_float < 1.0 and rate_float != 0: 
+                rate_float *= 100
+            rate_val_disp = f"{rate_float:g}"
+    except:
+        rate_val_disp = "0"
+        
+    pdf.cell(cols[0], 10, safe_text(period_val), 1, 0, 'C')
+    pdf.cell(cols[1], 10, f"{val_col1:,.2f}", 1, 0, 'C')
+    pdf.cell(cols[2], 10, f"{rate_val_disp}%", 1, 0, 'C')
     pdf.cell(cols[3], 10, f"{val_col3:,.2f}", 1, 1, 'C')
 
     # --- TOTAUX ---
@@ -219,25 +230,25 @@ def generate_invoice_pdf(row_data, invoice_type, invoice_ref, signature_path=Non
             pdf.cell(40, 7, f"{v:,.2f}", 1, 1, 'R')
 
     if invoice_type == 'commission':
-        aline("Total Commission HT", row_data['comm_ht'])
-        aline("TVA 20%", row_data['tva'])
-        aline("Total Facture TTC", row_data['inv_ttc'], True, True)
-        amount_to_word = row_data['inv_ttc']
+        aline("Total Commission HT", totals['comm_ht'])
+        aline("TVA 20%", totals['tva'])
+        aline("Total Facture TTC", totals['inv_ttc'], True, True)
+        amount_to_word = totals['inv_ttc']
         word_label = "Total Facture TTC"
     elif invoice_type == 'debours':
-        aline("Total du panier (TTC)", row_data['sales_ttc'])
-        aline("Deduction Yassir (TTC)", row_data['inv_ttc']) 
-        aline("Total à payer TTC", row_data['net_pay'], True, True)
-        amount_to_word = row_data['net_pay']
+        aline("Total du panier (TTC)", totals['sales_ttc'])
+        aline("Deduction Yassir (TTC)", totals['inv_ttc']) 
+        aline("Total à payer TTC", totals['net_pay'], True, True)
+        amount_to_word = totals['net_pay']
         word_label = "Total à payer TTC"
     else: 
-        aline("Total Commission HT", row_data['comm_ht'])
-        aline("TVA 20%", row_data['tva'])
-        aline("Total Facture TTC", row_data['inv_ttc'], True)
-        aline("Total du panier", row_data['sales_ttc'])
+        aline("Total Commission HT", totals['comm_ht'])
+        aline("TVA 20%", totals['tva'])
+        aline("Total Facture TTC", totals['inv_ttc'], True)
+        aline("Total du panier", totals['sales_ttc'])
         pdf.ln(2)
-        aline("Total à payer TTC", row_data['net_pay'], True, True)
-        amount_to_word = row_data['net_pay']
+        aline("Total à payer TTC", totals['net_pay'], True, True)
+        amount_to_word = totals['net_pay']
         word_label = "Total à payer TTC"
     
     # --- ARRETÉ DE COMPTE ---
@@ -260,43 +271,20 @@ def generate_invoice_pdf(row_data, invoice_type, invoice_ref, signature_path=Non
         pdf.set_font('Arial', '', 8)
         pdf.cell(0, 5, f"RIB Paiement : {rib}", 0, 1, 'L')
 
-    # --- SIGNATURE ---
+    # --- SIGNATURE / CACHET ---
     if signature_path and os.path.exists(signature_path):
         y_pos = pdf.get_y() + 5
         if y_pos > 250:
             pdf.add_page()
             y_pos = 20
-        # x=140 pour décaler un peu à gauche, w=60 pour la taille de l'image
-        pdf.image(signature_path, x=140, y=y_pos, w=60)
+        # MODIFICATION : Taille réduite (w=50) et position bien à droite (x=145)
+        pdf.image(signature_path, x=145, y=y_pos, w=50)
 
     return pdf.output(dest='S').encode('latin-1', errors='replace')
 
 
-# --- FONCTION EXÉCUTÉE EN PARALLÈLE ---
-def process_row_task(row_dict, is_separated, signature_path):
-    results = []
-    safe_name = clean_filename(row_dict.get('Restaurant name', f"Client_{row_dict['Original_Index']}"))
-    base_ref = row_dict['Base_Ref']
-    
-    if is_separated:
-        ref_comm = f"{base_ref}-COMMISSION"
-        ref_deb = f"{base_ref}-NOTE-DEBOURS"
-        
-        pdf_comm = generate_invoice_pdf(row_dict, 'commission', ref_comm, signature_path)
-        pdf_deb = generate_invoice_pdf(row_dict, 'debours', ref_deb, signature_path)
-        
-        results.append((f"{ref_comm}_{safe_name}.pdf", pdf_comm))
-        results.append((f"{ref_deb}_{safe_name}.pdf", pdf_deb))
-        final_excel_ref = f"{ref_comm}  /  {ref_deb}"
-    else:
-        pdf_grouped = generate_invoice_pdf(row_dict, 'grouped', base_ref, signature_path)
-        results.append((f"{base_ref}_{safe_name}.pdf", pdf_grouped))
-        final_excel_ref = base_ref
-        
-    return row_dict['Original_Index'], final_excel_ref, results
-
 # --- INTERFACE ---
-st.title("📄 Édition Factures & Mise à jour Excel ⚡(Rapide)")
+st.title("📄 Édition Factures & Mise à jour Excel ⚡")
 
 col_options1, col_options2 = st.columns(2)
 
@@ -309,8 +297,8 @@ with col_options1:
 
 with col_options2:
     st.markdown("✍️ **Cachet et Signature**")
-    st.info("💡 Placez un fichier `cachet.png` dans le dossier pour l'utiliser par défaut, ou uploadez-en un ici.")
-    signature_file = st.file_uploader("Uploader une image (PNG ou JPG) pour écraser le défaut", type=['png', 'jpg', 'jpeg'])
+    st.info("💡 Placez un fichier `cachet.png` dans le même dossier pour l'utiliser par défaut.")
+    signature_file = st.file_uploader("Uploader une image (PNG/JPG) pour écraser le défaut", type=['png', 'jpg', 'jpeg'])
 
 uploaded_file = st.file_uploader("📂 Charger le fichier Excel (xlsx)", type=['xlsx'])
 
@@ -341,7 +329,6 @@ if uploaded_file:
                 
                 if st.button("🚀 GÉNÉRER (PDF + EXCEL)"):
                     
-                    # Gestion Signature (Priorité Upload > Fichier cachet.png local)
                     signature_path = None
                     if signature_file:
                         try:
@@ -354,61 +341,86 @@ if uploaded_file:
                     elif os.path.exists(CACHET_PATH):
                         signature_path = CACHET_PATH
 
-                    # 1. VECTORISATION PANDAS (Ultra-rapide)
-                    df_to_process['sales_ttc'] = df_to_process['Item total'].apply(clean_currency)
-                    df_to_process['rate_decimal'] = df_to_process['Taux de commission'].apply(parse_rate)
-                    
-                    # Les mathématiques restent 100% intactes :
-                    df_to_process['sales_ht'] = df_to_process['sales_ttc'] / 1.2
-                    df_to_process['comm_ht'] = df_to_process['sales_ht'] * df_to_process['rate_decimal']
-                    df_to_process['tva'] = df_to_process['comm_ht'] * 0.20
-                    df_to_process['inv_ttc'] = df_to_process['comm_ht'] + df_to_process['tva']
-                    df_to_process['net_pay'] = df_to_process['sales_ttc'] - df_to_process['inv_ttc']
-                    df_to_process['Invoice Date Formatted'] = df_to_process['Date du virement'].apply(format_date_virement)
-                    
-                    is_separated = "Séparé" in format_generation
-                    
-                    # Préparation des tâches pour le multithreading
-                    tasks = []
-                    for count, (idx, row) in enumerate(df_to_process.iterrows()):
-                        row_dict = row.to_dict()
-                        row_dict['Original_Index'] = idx
-                        row_dict['Base_Ref'] = f"{start_idx + count}-{date_suffix}YAS"
-                        tasks.append(row_dict)
-                    
                     zip_buffer = io.BytesIO()
-                    progress_text = "Génération des PDF en parallèle..."
+                    progress_text = "Génération en cours..."
                     my_bar = st.progress(0, text=progress_text)
                     
-                    # 2. MULTITHREADING + ÉCRITURE ZIP
-                    completed_count = 0
-                    total_tasks = len(tasks)
+                    is_separated = "Séparé" in format_generation
+                    total_docs = len(df_to_process)
                     
                     try:
                         with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
-                            # Utilisation de 8 threads en parallèle
-                            with ThreadPoolExecutor(max_workers=8) as executor:
-                                futures = {executor.submit(process_row_task, t, is_separated, signature_path): t for t in tasks}
-                                
-                                for future in as_completed(futures):
-                                    idx, final_ref, pdf_files = future.result()
+                            
+                            # Optimisation UI : Variable pour limiter les rafraichissements de la barre de progression
+                            last_percent = -1
+                            
+                            for count, (index, row) in enumerate(df_to_process.iterrows()):
+                                try:
+                                    # VENTES TTC & HT
+                                    sales_ttc = clean_currency(row.get('Item total', 0))
+                                    sales_ht = sales_ttc / 1.2 
                                     
-                                    # Mise à jour de l'Excel
-                                    df.at[idx, 'Facture N°'] = final_ref
+                                    raw_rate = row.get('Taux de commission', 0)
+                                    rate_decimal = 0.0
+                                    try:
+                                        if not pd.isna(raw_rate):
+                                            s_rate = str(raw_rate).replace('%', '').replace(',', '.').strip()
+                                            val = float(s_rate)
+                                            if val > 1.0: 
+                                                rate_decimal = val / 100.0
+                                            else:
+                                                rate_decimal = val
+                                    except:
+                                        rate_decimal = 0.0
                                     
-                                    # Ajout des PDF dans le zip
-                                    for filename, pdf_bytes in pdf_files:
-                                        zip_file.writestr(filename, pdf_bytes)
+                                    comm_ht = sales_ht * rate_decimal
+                                    tva = comm_ht * 0.20
+                                    ttc = comm_ht + tva
+                                    net_pay_final = sales_ttc - ttc
                                     
-                                    completed_count += 1
+                                    totals = {
+                                        'sales_ttc': sales_ttc,
+                                        'sales_ht': sales_ht,
+                                        'comm_ht': comm_ht, 
+                                        'tva': tva, 
+                                        'inv_ttc': ttc, 
+                                        'net_pay': net_pay_final
+                                    }
                                     
-                                    # Throttle de la progress bar (mise à jour fluide)
-                                    percent = int((completed_count / total_tasks) * 100)
-                                    if completed_count % max(1, total_tasks // 20) == 0 or completed_count == total_tasks:
+                                    raw_date_virement = row.get('Date du virement', '')
+                                    invoice_date = format_date_virement(raw_date_virement)
+                                    
+                                    current_seq = start_idx + count
+                                    base_ref = f"{current_seq}-{date_suffix}YAS"
+                                    safe_name = clean_filename(row.get('Restaurant name', f'Client_{index}'))
+                                    
+                                    if is_separated:
+                                        ref_comm = f"{base_ref}-COMMISSION"
+                                        ref_deb = f"{base_ref}-NOTE-DEBOURS"
+                                        
+                                        df.at[index, 'Facture N°'] = f"{ref_comm}  /  {ref_deb}"
+                                        
+                                        pdf_comm = generate_invoice_pdf(row, totals, invoice_date, 'commission', ref_comm, signature_path)
+                                        zip_file.writestr(f"{ref_comm}_{safe_name}.pdf", pdf_comm)
+
+                                        pdf_debours = generate_invoice_pdf(row, totals, invoice_date, 'debours', ref_deb, signature_path)
+                                        zip_file.writestr(f"{ref_deb}_{safe_name}.pdf", pdf_debours)
+                                    else:
+                                        df.at[index, 'Facture N°'] = base_ref
+                                        pdf_grouped = generate_invoice_pdf(row, totals, invoice_date, 'grouped', base_ref, signature_path)
+                                        zip_file.writestr(f"{base_ref}_{safe_name}.pdf", pdf_grouped)
+                                        
+                                    # Mise à jour de la barre de progression optimisée (anti-freeze)
+                                    percent = int(((count + 1) / total_docs) * 100)
+                                    if percent > last_percent:
                                         my_bar.progress(percent, text=f"{progress_text} ({percent}%)")
+                                        last_percent = percent
+                                        
+                                except Exception as e:
+                                    st.error(f"Erreur ligne {index}: {e}")
 
                         my_bar.empty()
-                        st.success(f"🎉 Génération terminée à la vitesse de l'éclair ! ({completed_count} lignes traitées)")
+                        st.success(f"🎉 Génération terminée avec succès ! ({len(df_to_process)} lignes traitées)")
                         
                         st.markdown("---")
                         col_zip, col_xls = st.columns(2)
@@ -438,7 +450,6 @@ if uploaded_file:
                         ''', unsafe_allow_html=True)
 
                     finally:
-                        # On supprime uniquement si on a créé un fichier temporaire via upload
                         if signature_file and signature_path and os.path.exists(signature_path):
                             try: os.remove(signature_path)
                             except: pass
