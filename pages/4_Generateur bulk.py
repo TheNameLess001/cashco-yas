@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 YASSIR_PURPLE = "#6f42c1"
 YASSIR_RGB = (111, 66, 193)
 LOGO_PATH = "logo.png"
-CACHET_PATH = "cachet.png" # NOUVEAU : Chemin par défaut du cachet
+CACHET_PATH = "cachet.png" # Chemin par défaut du cachet
 
 st.set_page_config(page_title="Générateur Factures Yassir", page_icon="📄", layout="wide")
 
@@ -173,8 +173,9 @@ def generate_invoice_pdf(row_data, invoice_type, invoice_ref, signature_path=Non
     cols = [60, 40, 40, 50]
     
     if invoice_type == 'commission':
-        hd = ['Periode', 'Base Calcul (HT)', 'Taux Comm.', 'Commission HT']
-        val_col1 = row_data['sales_ht']
+        # MODIFICATION : Intitulé sans "HT" et valeur en TTC (sales_ttc)
+        hd = ['Periode', 'Base de calcul', 'Taux Comm.', 'Commission HT']
+        val_col1 = row_data['sales_ttc']
         val_col3 = row_data['comm_ht']
     elif invoice_type == 'debours':
         hd = ['Periode', 'Ventes (TTC)', 'Taux Comm.', 'Commission (TTC)']
@@ -265,8 +266,8 @@ def generate_invoice_pdf(row_data, invoice_type, invoice_ref, signature_path=Non
         if y_pos > 250:
             pdf.add_page()
             y_pos = 20
-        # x=120 pour décaler un peu à gauche, w=40 pour la taille de l'image
-        pdf.image(signature_path, x=120, y=y_pos, w=40)
+        # x=140 pour décaler un peu à gauche, w=60 pour la taille de l'image
+        pdf.image(signature_path, x=140, y=y_pos, w=60)
 
     return pdf.output(dest='S').encode('latin-1', errors='replace')
 
@@ -356,6 +357,8 @@ if uploaded_file:
                     # 1. VECTORISATION PANDAS (Ultra-rapide)
                     df_to_process['sales_ttc'] = df_to_process['Item total'].apply(clean_currency)
                     df_to_process['rate_decimal'] = df_to_process['Taux de commission'].apply(parse_rate)
+                    
+                    # Les mathématiques restent 100% intactes :
                     df_to_process['sales_ht'] = df_to_process['sales_ttc'] / 1.2
                     df_to_process['comm_ht'] = df_to_process['sales_ht'] * df_to_process['rate_decimal']
                     df_to_process['tva'] = df_to_process['comm_ht'] * 0.20
@@ -435,7 +438,7 @@ if uploaded_file:
                         ''', unsafe_allow_html=True)
 
                     finally:
-                        # On supprime uniquement si on a créé un fichier temporaire
+                        # On supprime uniquement si on a créé un fichier temporaire via upload
                         if signature_file and signature_path and os.path.exists(signature_path):
                             try: os.remove(signature_path)
                             except: pass
