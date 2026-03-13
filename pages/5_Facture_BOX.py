@@ -52,7 +52,6 @@ def hex_to_rgb(hex_code):
     return tuple(int(hex_code.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
 
 def safe_text(text):
-    """Nettoie le texte pour éviter les erreurs Unicode"""
     if text is None: return ""
     return str(text).encode('latin-1', 'replace').decode('latin-1')
 
@@ -99,13 +98,11 @@ def generate_box_invoice_pdf(c_data, signature_path=None):
     pdf.add_page()
     r,g,b = hex_to_rgb(YASSIR_PURPLE)
     
-    # Titre
     pdf.set_xy(110, 50)
     pdf.set_font('Arial', 'B', 14)
     pdf.set_text_color(r,g,b)
     pdf.cell(90, 8, "FACTURE DE CESSION", 0, 1, 'R')
     
-    # Info Facture
     pdf.set_x(110)
     pdf.set_font('Arial', 'B', 10)
     pdf.set_text_color(0)
@@ -115,7 +112,6 @@ def generate_box_invoice_pdf(c_data, signature_path=None):
     pdf.set_font('Arial', '', 10)
     pdf.cell(90, 6, f"Date: {safe_text(c_data['date_facture'])}", 0, 1, 'R')
     
-    # Bloc Destinataire
     sy = 50
     pdf.set_fill_color(248, 248, 248)
     pdf.set_draw_color(220, 220, 220)
@@ -133,7 +129,6 @@ def generate_box_invoice_pdf(c_data, signature_path=None):
     pdf.set_text_color(60)
     pdf.cell(80, 5, f"Ville: {safe_text(c_data['ville'])}", 0, 1, 'L')
     
-    # Tableau Headers
     pdf.set_y(90)
     pdf.set_fill_color(r,g,b)
     pdf.set_draw_color(r,g,b)
@@ -150,7 +145,6 @@ def generate_box_invoice_pdf(c_data, signature_path=None):
     pdf.set_text_color(0)
     pdf.set_font('Arial', '', 9)
     
-    # Tableau Data
     x = pdf.get_x()
     y = pdf.get_y()
     designation = f"Cession BOX NEW LOGO YASSIR\nRef N: {c_data['reference']}"
@@ -184,7 +178,6 @@ def generate_box_invoice_pdf(c_data, signature_path=None):
     pdf.set_text_color(100)
     pdf.cell(0, 5, f"Arrete la presente facture a la somme de : {c_data['prix_ttc']:.2f} Dirhams (TTC)", 0, 1, 'L')
     
-    # Signature logic
     if signature_path and os.path.exists(signature_path):
         y_signature = pdf.get_y() + 5
         pdf.image(signature_path, x=140, y=y_signature, w=40)
@@ -217,9 +210,9 @@ if uploaded_file:
             selections = st.multiselect("Choisissez une ou plusieurs livraisons :", toutes_les_options)
 
         if selections:
-            # Récupérer les données pour afficher des KPIs
-            lignes_selectionnees = df[df['Label_Selection'].isin(selections)]
-            total_ttc_global = pd.to_numeric(lignes_selectionnees['Prix de Vente TTC'], errors='coerce').fillna(300.0).sum()
+            # OPTIMISATION : On filtre le dataframe une seule fois !
+            df_selectionne = df[df['Label_Selection'].isin(selections)]
+            total_ttc_global = pd.to_numeric(df_selectionne['Prix de Vente TTC'], errors='coerce').fillna(300.0).sum()
             
             st.markdown("---")
             k1, k2 = st.columns(2)
@@ -228,59 +221,72 @@ if uploaded_file:
 
             st.markdown("### 🖨️ Téléchargements")
             
-            # Gestion temporaire du cachet/signature
             signature_path = None
             if signature_file:
                 signature_path = "temp_signature.png"
                 with open(signature_path, "wb") as f:
                     f.write(signature_file.getbuffer())
 
-            # Traitement ZIP vs Unitaire
+            # --- GÉNÉRATION EN MASSE (OPTIMISÉE) ---
             if len(selections) > 1:
                 if st.button("🚀 GÉNÉRER LE ZIP DES FACTURES", use_container_width=True):
-                    with st.spinner("Génération des fichiers en cours..."):
-                        zip_buffer = io.BytesIO()
-                        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-                            for sel in selections:
-                                ligne = df[df['Label_Selection'] == sel].iloc[0]
-                                
-                                try:
-                                    prix_ttc = float(ligne['Prix de Vente TTC'])
-                                except:
-                                    prix_ttc = 300.0
-                                
-                                c_data = {
-                                    "client": ligne['Nom du Livreur'],
-                                    "ville": ligne.get('Ville', ''),
-                                    "reference": ligne['Référence'],
-                                    "num_facture": f"{ligne['Référence']}/{datetime.now().strftime('%m%y')}",
-                                    "date_facture": datetime.now().strftime("%d/%m/%Y"),
-                                    "prix_ttc": prix_ttc,
-                                    "prix_ht": prix_ttc / 1.20,
-                                    "tva": prix_ttc - (prix_ttc / 1.20)
-                                }
-                                
-                                try:
-                                    pdf_bytes = generate_box_invoice_pdf(c_data, signature_path)
-                                    nom_fichier = f"Facture_{clean_filename(c_data['reference'])}_{clean_filename(c_data['client'])}.pdf"
-                                    zip_file.writestr(nom_fichier, pdf_bytes)
-                                except Exception as e:
-                                    st.warning(f"Erreur sur {sel}: {e}")
+                    
+                    # Interface de progression
+                    progress_text = st.empty()
+                    progress_bar = st.progress(0)
+                    total_fichiers = len(df_selectionne)
+                    
+                    zip_buffer = io.BytesIO()
+                    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
                         
-                        b_zip = base64.b64encode(zip_buffer.getvalue()).decode()
-                        filename_zip = f"Batch_Factures_Boxes_{datetime.now().strftime('%Y%m%d')}.zip"
-                        
-                        st.success("✅ Fichiers prêts !")
-                        st.markdown(f'''
-                            <a href="data:application/zip;base64,{b_zip}" download="{filename_zip}">
-                                <button style="background-color:#28a745; color:white; border:none; padding:15px 25px; border-radius:10px; width:100%; font-size:16px; font-weight:bold; cursor:pointer;">
-                                📦 TÉLÉCHARGER LE DOSSIER ZIP COMPLET
-                                </button>
-                            </a>
-                        ''', unsafe_allow_html=True)
+                        # Itération optimisée (on utilise iterrows au lieu de chercher la ligne à chaque fois)
+                        for index, (i, ligne) in enumerate(df_selectionne.iterrows()):
+                            
+                            # Mise à jour de l'UI
+                            progress_text.text(f"⏳ Génération {index + 1}/{total_fichiers} : Facture {ligne['Référence']}...")
+                            
+                            try:
+                                prix_ttc = float(ligne['Prix de Vente TTC'])
+                            except:
+                                prix_ttc = 300.0
+                            
+                            c_data = {
+                                "client": ligne['Nom du Livreur'],
+                                "ville": ligne.get('Ville', ''),
+                                "reference": ligne['Référence'],
+                                "num_facture": f"{ligne['Référence']}/{datetime.now().strftime('%m%y')}",
+                                "date_facture": datetime.now().strftime("%d/%m/%Y"),
+                                "prix_ttc": prix_ttc,
+                                "prix_ht": prix_ttc / 1.20,
+                                "tva": prix_ttc - (prix_ttc / 1.20)
+                            }
+                            
+                            try:
+                                pdf_bytes = generate_box_invoice_pdf(c_data, signature_path)
+                                nom_fichier = f"Facture_{clean_filename(c_data['reference'])}_{clean_filename(c_data['client'])}.pdf"
+                                zip_file.writestr(nom_fichier, pdf_bytes)
+                            except Exception as e:
+                                st.warning(f"Erreur sur {ligne['Référence']}: {e}")
+                                
+                            # Mettre à jour la barre de progression
+                            progress_bar.progress((index + 1) / total_fichiers)
+                    
+                    progress_text.empty() # Efface le texte de chargement
+                    b_zip = base64.b64encode(zip_buffer.getvalue()).decode()
+                    filename_zip = f"Batch_Factures_Boxes_{datetime.now().strftime('%Y%m%d')}.zip"
+                    
+                    st.success("✅ Fichiers prêts !")
+                    st.markdown(f'''
+                        <a href="data:application/zip;base64,{b_zip}" download="{filename_zip}">
+                            <button style="background-color:#28a745; color:white; border:none; padding:15px 25px; border-radius:10px; width:100%; font-size:16px; font-weight:bold; cursor:pointer;">
+                            📦 TÉLÉCHARGER LE DOSSIER ZIP COMPLET
+                            </button>
+                        </a>
+                    ''', unsafe_allow_html=True)
 
+            # --- GÉNÉRATION UNITAIRE ---
             elif len(selections) == 1:
-                ligne = df[df['Label_Selection'] == selections[0]].iloc[0]
+                ligne = df_selectionne.iloc[0]
                 try:
                     prix_ttc = float(ligne['Prix de Vente TTC'])
                 except:
@@ -298,9 +304,10 @@ if uploaded_file:
                 }
                 
                 try:
-                    pdf_bytes = generate_box_invoice_pdf(c_data, signature_path)
-                    b_pdf = base64.b64encode(pdf_bytes).decode()
-                    nom_fichier = f"Facture_{clean_filename(c_data['reference'])}.pdf"
+                    with st.spinner("Génération de la facture..."):
+                        pdf_bytes = generate_box_invoice_pdf(c_data, signature_path)
+                        b_pdf = base64.b64encode(pdf_bytes).decode()
+                        nom_fichier = f"Facture_{clean_filename(c_data['reference'])}.pdf"
                     
                     st.markdown(f'''
                         <a href="data:application/pdf;base64,{b_pdf}" download="{nom_fichier}">
@@ -312,7 +319,6 @@ if uploaded_file:
                 except Exception as e:
                     st.error(f"Erreur PDF: {e}")
 
-            # Nettoyage
             if signature_path and os.path.exists(signature_path):
                 os.remove(signature_path)
 
