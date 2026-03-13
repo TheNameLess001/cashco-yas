@@ -1,234 +1,322 @@
 import streamlit as st
 import pandas as pd
-import datetime
-import os
 from fpdf import FPDF
-import io
+import base64
+from datetime import datetime
+import os
 import zipfile
+import io
 
-st.title("📄 Générateur de Factures (Design Personnalisé)")
+# --- CONFIG ---
+YASSIR_PURPLE = "#6f42c1"
+LOGO_PATH = "logo.png"
 
-# --- BARRE LATÉRALE : PARAMÈTRES DE DESIGN ---
-st.sidebar.header("🎨 Personnalisation (La Forme)")
-logo_file = st.sidebar.file_uploader("Logo de l'entreprise (PNG/JPG)", type=["png", "jpg", "jpeg"])
-couleur_principale = st.sidebar.color_picker("Couleur principale (Titres/En-têtes)", "#1E3A8A")
-couleur_texte = st.sidebar.color_picker("Couleur du texte", "#000000")
+st.set_page_config(page_title="Génération Factures Boxes", page_icon="📦", layout="wide")
 
-def hex_to_rgb(hex_color):
-    hex_color = hex_color.lstrip('#')
-    return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+# --- STYLE CSS (GLOBAL) ---
+st.markdown(f"""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap');
+    html, body, [class*="css"] {{ font-family: 'Poppins', sans-serif; }}
+    
+    .stApp {{ background-color: #F8F9FA; }}
+    h1, h2, h3 {{ color: {YASSIR_PURPLE} !important; }}
+    
+    /* SIDEBAR BLANCHE */
+    section[data-testid="stSidebar"] {{
+        background-color: #FFFFFF !important;
+        border-right: 2px solid {YASSIR_PURPLE};
+    }}
+    
+    /* KPI CARDS */
+    div[data-testid="metric-container"] {{
+        background-color: white; 
+        border-left: 5px solid {YASSIR_PURPLE};
+        border-radius: 8px;
+        padding: 15px; 
+        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+    }}
+    </style>
+""", unsafe_allow_html=True)
 
-color_rgb_main = hex_to_rgb(couleur_principale)
-color_rgb_text = hex_to_rgb(couleur_texte)
+# --- SIDEBAR ---
+if os.path.exists(LOGO_PATH):
+    st.sidebar.image(LOGO_PATH, width=160)
+    st.sidebar.markdown("---")
 
-# --- FONCTION DE GÉNÉRATION DU PDF ---
-def generer_pdf_facture(donnees, logo_path=None):
-    pdf = FPDF()
+st.sidebar.markdown("### ✍️ Cachet & Signature")
+signature_file = st.sidebar.file_uploader("Importer une signature (PNG/JPG)", type=["png", "jpg", "jpeg"])
+
+# --- MOTEUR PDF ---
+def hex_to_rgb(hex_code): 
+    return tuple(int(hex_code.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
+
+def safe_text(text):
+    """Nettoie le texte pour éviter les erreurs Unicode"""
+    if text is None: return ""
+    return str(text).encode('latin-1', 'replace').decode('latin-1')
+
+def clean_filename(name):
+    return "".join([c for c in str(name) if c.isalnum() or c in (' ', '-', '_')]).strip()
+
+class PDFTemplate(FPDF):
+    def header(self):
+        if os.path.exists(LOGO_PATH): 
+            self.image(LOGO_PATH, 10, 8, 30)
+        else:
+            self.set_font('Arial', 'B', 24)
+            r,g,b = hex_to_rgb(YASSIR_PURPLE)
+            self.set_text_color(r,g,b)
+            self.cell(50, 15, 'Yassir', 0, 0, 'L')
+            
+        self.set_xy(10, 28)
+        self.set_font('Arial', 'B', 9)
+        self.set_text_color(0)
+        self.cell(0, 4, 'YASSIR MAROC', 0, 1, 'L')
+        
+        self.set_font('Arial', '', 8)
+        self.set_text_color(80)
+        self.cell(0, 4, 'VILLA 269 LOTISSEMENT MANDARONA', 0, 1, 'L')
+        self.cell(0, 4, 'SIDI MAAROUF CASABLANCA - Maroc', 0, 1, 'L')
+        self.cell(0, 4, 'ICE: 002148105000084', 0, 1, 'L')
+        self.ln(5)
+
+    def footer(self):
+        self.set_y(-22)
+        self.set_font('Arial', '', 7)
+        self.set_text_color(120)
+        self.multi_cell(0, 3, "Tout incident de reglement des echeances peut entrainer l'envoi d'une mise en demeure.\nYASSIR MAROC SARL au capital de 2,000,000 DH\nVILLA 269 LOTISSEMENT MANDARONA SIDI MAAROUF CASABLANCA - Maroc\nICE N002148105000084 - RC 413733 - IF 26164744", 0, 'C')
+        
+        self.set_y(-12)
+        r,g,b = hex_to_rgb(YASSIR_PURPLE)
+        self.set_text_color(r,g,b)
+        self.set_font('Arial', 'B', 8)
+        self.cell(0, 10, f'Page {self.page_no()}/{{nb}}', 0, 0, 'R')
+
+def generate_box_invoice_pdf(c_data, signature_path=None):
+    pdf = PDFTemplate()
+    pdf.alias_nb_pages()
     pdf.add_page()
+    r,g,b = hex_to_rgb(YASSIR_PURPLE)
     
-    # Couleurs par défaut
-    pdf.set_text_color(*color_rgb_text)
+    # Titre
+    pdf.set_xy(110, 50)
+    pdf.set_font('Arial', 'B', 14)
+    pdf.set_text_color(r,g,b)
+    pdf.cell(90, 8, "FACTURE DE CESSION", 0, 1, 'R')
     
-    # 1. EN-TÊTE (Logo + Infos Yassir)
-    if logo_path:
-        # On place le logo en haut à gauche
-        pdf.image(logo_path, x=10, y=10, w=30)
-    else:
-        pdf.set_font("Arial", "B", 16)
-        pdf.set_text_color(*color_rgb_main)
-        pdf.cell(100, 10, "YASSIR MAROC", ln=True)
-        pdf.set_text_color(*color_rgb_text)
-
-    # Info Yassir
-    pdf.set_xy(10, 30)
-    pdf.set_font("Arial", "", 10)
-    pdf.multi_cell(100, 5, "YASSIR MAROC\nVILLA 269 LOTISSEMENT MANDARONA\nSIDI MAAROUF CASABLANCA - Maroc\nICE: 002148105000084")
+    # Info Facture
+    pdf.set_x(110)
+    pdf.set_font('Arial', 'B', 10)
+    pdf.set_text_color(0)
+    pdf.cell(90, 6, f"N: {safe_text(c_data['num_facture'])}", 0, 1, 'R')
     
-    # Info Client (À droite)
-    pdf.set_xy(110, 30)
-    pdf.set_font("Arial", "B", 10)
-    pdf.cell(90, 5, "CLIENT :", ln=True)
-    pdf.set_xy(110, 35)
-    pdf.set_font("Arial", "", 10)
-    pdf.multi_cell(90, 5, f"{donnees['client']}\n{donnees['ville']}")
-
-    pdf.ln(10)
+    pdf.set_x(110)
+    pdf.set_font('Arial', '', 10)
+    pdf.cell(90, 6, f"Date: {safe_text(c_data['date_facture'])}", 0, 1, 'R')
     
-    # 2. TITRE DE LA FACTURE ET DATES
-    pdf.set_font("Arial", "B", 14)
-    pdf.set_text_color(*color_rgb_main)
-    # Réf de facture générée
-    num_facture = f"{donnees['reference']}/{datetime.datetime.now().strftime('%m%y')}"
-    pdf.cell(0, 10, f"FACTURE N° : {num_facture}", ln=True, align="C")
+    # Bloc Destinataire
+    sy = 50
+    pdf.set_fill_color(248, 248, 248)
+    pdf.set_draw_color(220, 220, 220)
+    pdf.rect(10, sy, 90, 25, 'FD')
+    pdf.set_fill_color(r,g,b)
+    pdf.rect(10, sy, 3, 25, 'F')
     
-    pdf.set_font("Arial", "", 10)
-    pdf.set_text_color(*color_rgb_text)
-    pdf.cell(0, 5, f"Date de facture : {donnees['date_facture']}", ln=True, align="C")
-    pdf.ln(10)
+    pdf.set_xy(16, sy+6)
+    pdf.set_font('Arial', 'B', 10)
+    pdf.set_text_color(0)
+    pdf.cell(80, 5, safe_text(c_data['client'].upper()), 0, 1, 'L')
     
-    # 3. TABLEAU DES LIGNES (Le Fond)
-    pdf.set_fill_color(*color_rgb_main)
-    pdf.set_text_color(255, 255, 255) # Texte en blanc pour l'en-tête du tableau
-    pdf.set_font("Arial", "B", 11)
+    pdf.set_xy(16, sy+12)
+    pdf.set_font('Arial', '', 9)
+    pdf.set_text_color(60)
+    pdf.cell(80, 5, f"Ville: {safe_text(c_data['ville'])}", 0, 1, 'L')
     
-    # En-tête du tableau
-    pdf.cell(140, 10, " DÉSIGNATION", border=1, fill=True)
-    pdf.cell(50, 10, " TOTAL HT", border=1, fill=True, align="C", ln=True)
+    # Tableau Headers
+    pdf.set_y(90)
+    pdf.set_fill_color(r,g,b)
+    pdf.set_draw_color(r,g,b)
+    pdf.set_text_color(255)
+    pdf.set_font('Arial', 'B', 9)
     
-    # Lignes du tableau
-    pdf.set_fill_color(240, 240, 240) # Fond gris clair
-    pdf.set_text_color(*color_rgb_text)
-    pdf.set_font("Arial", "", 10)
+    cols = [140, 50]
+    hd = ['DÉSIGNATION', 'TOTAL HT']
+    pdf.cell(cols[0], 10, safe_text(hd[0]), 1, 0, 'L', 1)
+    pdf.cell(cols[1], 10, safe_text(hd[1]), 1, 0, 'C', 1)
     
-    designation = f"Cession BOX NEW LOGO YASSIR\nRéf N°: {donnees['reference']}"
+    pdf.ln()
+    pdf.set_draw_color(200)
+    pdf.set_text_color(0)
+    pdf.set_font('Arial', '', 9)
     
-    # Utilisation de multi_cell pour la désignation (pour gérer les retours à la ligne)
+    # Tableau Data
     x = pdf.get_x()
     y = pdf.get_y()
-    pdf.multi_cell(140, 10, designation, border=1)
+    designation = f"Cession BOX NEW LOGO YASSIR\nRef N: {c_data['reference']}"
+    pdf.multi_cell(cols[0], 10, safe_text(designation), 1)
     
-    # Repositionnement pour la cellule de prix
-    pdf.set_xy(x + 140, y)
-    pdf.cell(50, 20, f"{donnees['prix_ht']:.2f} DH", border=1, align="C", ln=True)
+    pdf.set_xy(x + cols[0], y)
+    pdf.cell(cols[1], 20, f"{c_data['prix_ht']:.2f}", 1, 1, 'C')
     
-    pdf.ln(10)
+    pdf.ln(8)
+    xt = 100
     
-    # 4. RÉCAPITULATIF DES TOTAUX (Aligné à droite comme sur le modèle)
-    pdf.set_font("Arial", "B", 10)
-    pdf.set_x(110)
-    pdf.cell(40, 8, "Total HT", border=1)
-    pdf.cell(40, 8, f"{donnees['prix_ht']:.2f} DH", border=1, align="R", ln=True)
+    def aline(l, v, b=False, bg=False):
+        pdf.set_x(xt)
+        pdf.set_font('Arial', 'B' if b else '', 9)
+        pdf.set_text_color(0)
+        if bg: 
+            pdf.set_fill_color(r,g,b)
+            pdf.set_text_color(255)
+            pdf.cell(50, 9, safe_text(l), 0, 0, 'L', 1)
+            pdf.cell(40, 9, f"{v:,.2f} DH", 0, 1, 'R', 1)
+        else: 
+            pdf.cell(50, 7, safe_text(l), 1, 0, 'L')
+            pdf.cell(40, 7, f"{v:,.2f}", 1, 1, 'R')
+            
+    aline("Total HT", c_data['prix_ht'])
+    aline("TVA 20%", c_data['tva'])
+    aline("Total à payer TTC", c_data['prix_ttc'], True, True)
     
-    pdf.set_x(110)
-    pdf.cell(40, 8, "TVA (20%)", border=1)
-    pdf.cell(40, 8, f"{donnees['tva']:.2f} DH", border=1, align="R", ln=True)
+    pdf.ln(5)
+    pdf.set_font('Arial', 'I', 8)
+    pdf.set_text_color(100)
+    pdf.cell(0, 5, f"Arrete la presente facture a la somme de : {c_data['prix_ttc']:.2f} Dirhams (TTC)", 0, 1, 'L')
     
-    pdf.set_x(110)
-    pdf.set_fill_color(*color_rgb_main)
-    pdf.set_text_color(255, 255, 255)
-    pdf.cell(40, 10, "Total à payer TTC", border=1, fill=True)
-    pdf.cell(40, 10, f"{donnees['prix_ttc']:.2f} DH", border=1, align="R", fill=True, ln=True)
-    
-    pdf.set_text_color(*color_rgb_text)
-    pdf.ln(15)
-    
-    # 5. BAS DE PAGE (Mentions)
-    pdf.set_font("Arial", "I", 9)
-    montant_lettres = "Arrêté la présente facture à la somme de : " # + logique pour écrire en lettres si besoin
-    pdf.cell(0, 5, montant_lettres, ln=True)
-    pdf.cell(0, 5, f"{donnees['prix_ttc']:.2f} Dirhams TTC.", ln=True)
-    
-    # Pied de page fixe
-    pdf.set_y(-25)
-    pdf.set_font("Arial", "I", 8)
-    pdf.cell(0, 4, "Tout incident de règlement peut entraîner l'envoi d'une mise en demeure.", ln=True, align="C")
-    pdf.cell(0, 4, "YASSIR MAROC SARL au capital de 2,000,000 DH - ICE 002148105000084", ln=True, align="C")
-    
-    # Retourne le PDF sous forme de bytes
-    return pdf.output(dest="S").encode("latin-1")
-
-
-# --- CORPS DE L'APPLICATION ---
-uploaded_file = st.file_uploader("Chargez le fichier de Suivi des ventes (CSV ou Excel)", type=["csv", "xlsx"])
-
-if uploaded_file is not None:
-    if uploaded_file.name.endswith('.csv'):
-        df = pd.read_csv(uploaded_file)
-    else:
-        df = pd.read_excel(uploaded_file)
+    # Signature logic
+    if signature_path and os.path.exists(signature_path):
+        y_signature = pdf.get_y() + 5
+        pdf.image(signature_path, x=140, y=y_signature, w=40)
         
-    df = df.dropna(subset=['Référence', 'Nom du Livreur'])
-    
-    # Création des options de sélection
-    df['Label_Selection'] = df['Référence'].astype(str) + " - " + df['Nom du Livreur'].astype(str)
-    toutes_les_options = df['Label_Selection'].tolist()
+    return pdf.output(dest='S').encode('latin-1', errors='replace')
 
-    st.write("### 📦 Sélection des factures à générer")
-    
-    # Toggle pour tout sélectionner
-    tout_selectionner = st.checkbox("Tout sélectionner (Génération en masse)")
-    
-    if tout_selectionner:
-        selections = toutes_les_options
-        st.info(f"{len(selections)} factures seront générées.")
-    else:
-        selections = st.multiselect("Choisissez une ou plusieurs livraisons :", toutes_les_options)
+# --- UI ---
+st.title("📄 Générateur de Factures Boxes")
+st.markdown("Importez le fichier **Suivi des ventes** pour éditer vos factures au nouveau format Yassir.")
 
-    if selections:
-        if st.button("🚀 Générer les factures", use_container_width=True):
+uploaded_file = st.file_uploader("📂 Fichier Excel/CSV de suivi", type=["csv", "xlsx"])
+
+if uploaded_file:
+    try:
+        if uploaded_file.name.endswith('.csv'):
+            df = pd.read_csv(uploaded_file, sep=None, engine='python')
+        else:
+            df = pd.read_excel(uploaded_file)
             
-            # Si un logo est uploadé, on le sauvegarde temporairement pour FPDF
-            logo_path = None
-            if logo_file:
-                logo_path = "temp_logo.png"
-                with open(logo_path, "wb") as f:
-                    f.write(logo_file.getbuffer())
+        df = df.dropna(subset=['Référence', 'Nom du Livreur'])
+        df['Label_Selection'] = df['Référence'].astype(str) + " - " + df['Nom du Livreur'].astype(str)
+        toutes_les_options = df['Label_Selection'].tolist()
+        
+        st.write("### 📦 Sélection des factures")
+        tout_selectionner = st.checkbox("Tout sélectionner (Génération en masse)")
+        
+        if tout_selectionner:
+            selections = toutes_les_options
+        else:
+            selections = st.multiselect("Choisissez une ou plusieurs livraisons :", toutes_les_options)
 
-            # Préparer un ZIP si on génère en masse, ou un seul fichier
+        if selections:
+            # Récupérer les données pour afficher des KPIs
+            lignes_selectionnees = df[df['Label_Selection'].isin(selections)]
+            total_ttc_global = pd.to_numeric(lignes_selectionnees['Prix de Vente TTC'], errors='coerce').fillna(300.0).sum()
+            
+            st.markdown("---")
+            k1, k2 = st.columns(2)
+            k1.metric("Factures sélectionnées", f"{len(selections)}")
+            k2.metric("Montant TTC Global", f"{total_ttc_global:,.2f} DH")
+
+            st.markdown("### 🖨️ Téléchargements")
+            
+            # Gestion temporaire du cachet/signature
+            signature_path = None
+            if signature_file:
+                signature_path = "temp_signature.png"
+                with open(signature_path, "wb") as f:
+                    f.write(signature_file.getbuffer())
+
+            # Traitement ZIP vs Unitaire
             if len(selections) > 1:
-                zip_buffer = io.BytesIO()
-                with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-                    for sel in selections:
-                        ligne = df[df['Label_Selection'] == sel].iloc[0]
+                if st.button("🚀 GÉNÉRER LE ZIP DES FACTURES", use_container_width=True):
+                    with st.spinner("Génération des fichiers en cours..."):
+                        zip_buffer = io.BytesIO()
+                        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+                            for sel in selections:
+                                ligne = df[df['Label_Selection'] == sel].iloc[0]
+                                
+                                try:
+                                    prix_ttc = float(ligne['Prix de Vente TTC'])
+                                except:
+                                    prix_ttc = 300.0
+                                
+                                c_data = {
+                                    "client": ligne['Nom du Livreur'],
+                                    "ville": ligne.get('Ville', ''),
+                                    "reference": ligne['Référence'],
+                                    "num_facture": f"{ligne['Référence']}/{datetime.now().strftime('%m%y')}",
+                                    "date_facture": datetime.now().strftime("%d/%m/%Y"),
+                                    "prix_ttc": prix_ttc,
+                                    "prix_ht": prix_ttc / 1.20,
+                                    "tva": prix_ttc - (prix_ttc / 1.20)
+                                }
+                                
+                                try:
+                                    pdf_bytes = generate_box_invoice_pdf(c_data, signature_path)
+                                    nom_fichier = f"Facture_{clean_filename(c_data['reference'])}_{clean_filename(c_data['client'])}.pdf"
+                                    zip_file.writestr(nom_fichier, pdf_bytes)
+                                except Exception as e:
+                                    st.warning(f"Erreur sur {sel}: {e}")
                         
-                        try:
-                            prix_ttc = float(ligne['Prix de Vente TTC'])
-                        except:
-                            prix_ttc = 300.0
+                        b_zip = base64.b64encode(zip_buffer.getvalue()).decode()
+                        filename_zip = f"Batch_Factures_Boxes_{datetime.now().strftime('%Y%m%d')}.zip"
                         
-                        donnees = {
-                            "client": ligne['Nom du Livreur'],
-                            "ville": ligne.get('Ville', ''),
-                            "reference": ligne['Référence'],
-                            "date_facture": datetime.datetime.now().strftime("%d/%m/%Y"),
-                            "prix_ttc": prix_ttc,
-                            "prix_ht": prix_ttc / 1.20,
-                            "tva": prix_ttc - (prix_ttc / 1.20)
-                        }
-                        
-                        pdf_bytes = generer_pdf_facture(donnees, logo_path)
-                        nom_fichier = f"Facture_{donnees['reference']}_{donnees['client']}.pdf"
-                        zip_file.writestr(nom_fichier, pdf_bytes)
-                
-                st.success("✅ Factures générées avec succès !")
-                st.download_button(
-                    label="📥 Télécharger toutes les factures (ZIP)",
-                    data=zip_buffer.getvalue(),
-                    file_name="Factures_Yassir.zip",
-                    mime="application/zip",
-                    use_container_width=True
-                )
-            
-            else:
-                # Génération d'un seul fichier
+                        st.success("✅ Fichiers prêts !")
+                        st.markdown(f'''
+                            <a href="data:application/zip;base64,{b_zip}" download="{filename_zip}">
+                                <button style="background-color:#28a745; color:white; border:none; padding:15px 25px; border-radius:10px; width:100%; font-size:16px; font-weight:bold; cursor:pointer;">
+                                📦 TÉLÉCHARGER LE DOSSIER ZIP COMPLET
+                                </button>
+                            </a>
+                        ''', unsafe_allow_html=True)
+
+            elif len(selections) == 1:
                 ligne = df[df['Label_Selection'] == selections[0]].iloc[0]
                 try:
                     prix_ttc = float(ligne['Prix de Vente TTC'])
                 except:
                     prix_ttc = 300.0
                 
-                donnees = {
+                c_data = {
                     "client": ligne['Nom du Livreur'],
                     "ville": ligne.get('Ville', ''),
                     "reference": ligne['Référence'],
-                    "date_facture": datetime.datetime.now().strftime("%d/%m/%Y"),
+                    "num_facture": f"{ligne['Référence']}/{datetime.now().strftime('%m%y')}",
+                    "date_facture": datetime.now().strftime("%d/%m/%Y"),
                     "prix_ttc": prix_ttc,
                     "prix_ht": prix_ttc / 1.20,
                     "tva": prix_ttc - (prix_ttc / 1.20)
                 }
                 
-                pdf_bytes = generer_pdf_facture(donnees, logo_path)
-                nom_fichier = f"Facture_{donnees['reference']}.pdf"
-                
-                st.success("✅ Facture générée avec succès !")
-                st.download_button(
-                    label=f"📥 Télécharger {nom_fichier}",
-                    data=pdf_bytes,
-                    file_name=nom_fichier,
-                    mime="application/pdf",
-                    use_container_width=True
-                )
+                try:
+                    pdf_bytes = generate_box_invoice_pdf(c_data, signature_path)
+                    b_pdf = base64.b64encode(pdf_bytes).decode()
+                    nom_fichier = f"Facture_{clean_filename(c_data['reference'])}.pdf"
+                    
+                    st.markdown(f'''
+                        <a href="data:application/pdf;base64,{b_pdf}" download="{nom_fichier}">
+                            <button style="background-color:{YASSIR_PURPLE}; color:white; border:none; padding:15px 25px; border-radius:10px; width:100%; font-size:16px; font-weight:bold; cursor:pointer;">
+                            📥 TÉLÉCHARGER LA FACTURE
+                            </button>
+                        </a>
+                    ''', unsafe_allow_html=True)
+                except Exception as e:
+                    st.error(f"Erreur PDF: {e}")
 
-            # Nettoyage du logo temporaire
-            if logo_path and os.path.exists(logo_path):
-                os.remove(logo_path)
+            # Nettoyage
+            if signature_path and os.path.exists(signature_path):
+                os.remove(signature_path)
+
+    except Exception as e:
+        st.error(f"Erreur de lecture du fichier : {e}")
+else:
+    st.info("Attente du fichier...")
