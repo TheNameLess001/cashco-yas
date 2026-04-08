@@ -11,19 +11,24 @@ import io
 YASSIR_PURPLE = "#6f42c1"
 LOGO_PATH = "logo.png"
 
-st.set_page_config(page_title="Génération Factures Partenaires", page_icon="📄", layout="wide")
+st.set_page_config(page_title="Génération Factures", page_icon="📄", layout="wide")
 
 # --- STYLE CSS (GLOBAL) ---
 st.markdown(f"""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap');
     html, body, [class*="css"] {{ font-family: 'Poppins', sans-serif; }}
+    
     .stApp {{ background-color: #F8F9FA; }}
     h1, h2, h3 {{ color: {YASSIR_PURPLE} !important; }}
+    
+    /* SIDEBAR BLANCHE */
     section[data-testid="stSidebar"] {{
         background-color: #FFFFFF !important;
         border-right: 2px solid {YASSIR_PURPLE};
     }}
+    
+    /* KPI CARDS */
     div[data-testid="metric-container"] {{
         background-color: white; 
         border-left: 5px solid {YASSIR_PURPLE};
@@ -34,22 +39,22 @@ st.markdown(f"""
     </style>
 """, unsafe_allow_html=True)
 
+# --- LOGO MENU ---
 if os.path.exists(LOGO_PATH):
     st.sidebar.image(LOGO_PATH, width=160)
     st.sidebar.markdown("---")
-
-st.sidebar.markdown("### ✍️ Cachet & Signature")
-signature_file = st.sidebar.file_uploader("Importer une signature (PNG/JPG)", type=["png", "jpg", "jpeg"])
 
 # --- MOTEUR PDF ---
 def hex_to_rgb(hex_code): 
     return tuple(int(hex_code.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
 
 def safe_text(text):
-    if pd.isna(text): return ""
+    """Nettoie le texte pour éviter les erreurs Unicode (remplace les inconnus par ?)"""
+    if text is None: return ""
     return str(text).encode('latin-1', 'replace').decode('latin-1')
 
 def clean_filename(name):
+    """Nettoie le nom du fichier pour le ZIP"""
     return "".join([c for c in str(name) if c.isalnum() or c in (' ', '-', '_')]).strip()
 
 class PDFTemplate(FPDF):
@@ -66,6 +71,7 @@ class PDFTemplate(FPDF):
         self.set_font('Arial', 'B', 9)
         self.set_text_color(0)
         self.cell(0, 4, 'YASSIR MAROC', 0, 1, 'L')
+        
         self.set_font('Arial', '', 8)
         self.set_text_color(80)
         self.cell(0, 4, 'VILLA 269 LOTISSEMENT MANDARONA', 0, 1, 'L')
@@ -77,33 +83,37 @@ class PDFTemplate(FPDF):
         self.set_y(-22)
         self.set_font('Arial', '', 7)
         self.set_text_color(120)
-        self.multi_cell(0, 3, "Tout incident de reglement des echeances peut entrainer l'envoi d'une mise en demeure.\nYASSIR MAROC SARL au capital de 2,000,000 DH\nVILLA 269 LOTISSEMENT MANDARONA SIDI MAAROUF CASABLANCA - Maroc\nICE N002148105000084 - RC 413733 - IF 26164744", 0, 'C')
+        self.multi_cell(0, 3, "YASSIR MAROC SARL au capital de 2,000,000 DH\nVILLA 269 LOTISSEMENT MANDARONA SIDI MAAROUF CASABLANCA - Maroc\nICE N002148105000084 - RC 413733 - IF 26164744", 0, 'C')
+        
         self.set_y(-12)
         r,g,b = hex_to_rgb(YASSIR_PURPLE)
         self.set_text_color(r,g,b)
         self.set_font('Arial', 'B', 8)
         self.cell(0, 10, f'Page {self.page_no()}/{{nb}}', 0, 0, 'R')
 
-def generate_invoice_pdf(c_data, signature_path=None):
+def generate_invoice_pdf(c_data, totals):
     pdf = PDFTemplate()
     pdf.alias_nb_pages()
     pdf.add_page()
     r,g,b = hex_to_rgb(YASSIR_PURPLE)
     
+    # Titre
     pdf.set_xy(110, 50)
     pdf.set_font('Arial', 'B', 14)
     pdf.set_text_color(r,g,b)
     pdf.cell(90, 8, "FACTURE COMMISSION", 0, 1, 'R')
     
+    # Info Facture
     pdf.set_x(110)
     pdf.set_font('Arial', 'B', 10)
     pdf.set_text_color(0)
-    pdf.cell(90, 6, f"N: {safe_text(c_data['num_facture'])}", 0, 1, 'R')
+    pdf.cell(90, 6, f"N: {safe_text(c_data['ref'])}", 0, 1, 'R')
     
     pdf.set_x(110)
     pdf.set_font('Arial', '', 10)
-    pdf.cell(90, 6, f"Date: {safe_text(c_data['date_facture'])}", 0, 1, 'R')
+    pdf.cell(90, 6, f"Date: {datetime.now().strftime('%d/%m/%Y')}", 0, 1, 'R')
     
+    # Bloc Destinataire
     sy = 50
     pdf.set_fill_color(248, 248, 248)
     pdf.set_draw_color(220, 220, 220)
@@ -114,16 +124,24 @@ def generate_invoice_pdf(c_data, signature_path=None):
     pdf.set_xy(16, sy+4)
     pdf.set_font('Arial', 'B', 10)
     pdf.set_text_color(0)
-    pdf.cell(80, 5, safe_text(c_data['client']), 0, 1, 'L')
+    pdf.cell(80, 5, safe_text(c_data['name']), 0, 1, 'L')
     
     pdf.set_xy(16, sy+10)
     pdf.set_font('Arial', '', 9)
     pdf.set_text_color(60)
-    pdf.cell(80, 5, safe_text(c_data['adresse'][:45]), 0, 1, 'L')
+    pdf.cell(80, 5, safe_text(c_data['address'][:45]), 0, 1, 'L')
+    
+    pdf.set_xy(16, sy+15)
+    pdf.cell(80, 5, safe_text(c_data['city']), 0, 1, 'L')
     
     pdf.set_xy(16, sy+20)
     pdf.cell(80, 5, f"ICE: {safe_text(c_data['ice'])}", 0, 1, 'L')
     
+    if c_data['rc']: 
+        pdf.set_xy(16, sy+25)
+        pdf.cell(80, 5, f"RC: {safe_text(c_data['rc'])}", 0, 1, 'L')
+    
+    # Tableau Headers
     pdf.set_y(100)
     pdf.set_fill_color(r,g,b)
     pdf.set_draw_color(r,g,b)
@@ -131,7 +149,7 @@ def generate_invoice_pdf(c_data, signature_path=None):
     pdf.set_font('Arial', 'B', 9)
     
     cols = [60, 40, 40, 50]
-    hd = ['Periode', 'Ventes (Food)', 'Taux Comm.', 'Commission HT']
+    hd = ['Periode', 'Ventes TTC (Food)', 'Taux Comm.', 'Commission HT']
     for i,h in enumerate(hd): 
         pdf.cell(cols[i], 10, safe_text(h), 1, 0, 'C', 1)
     
@@ -140,10 +158,11 @@ def generate_invoice_pdf(c_data, signature_path=None):
     pdf.set_text_color(0)
     pdf.set_font('Arial', '', 9)
     
-    pdf.cell(cols[0], 10, safe_text(c_data['periode']), 1, 0, 'C')
-    pdf.cell(cols[1], 10, f"{c_data['ventes']:,.2f}", 1, 0, 'C')
-    pdf.cell(cols[2], 10, f"{c_data['taux']}%", 1, 0, 'C')
-    pdf.cell(cols[3], 10, f"{c_data['ht']:,.2f}", 1, 1, 'C')
+    # Tableau Data
+    pdf.cell(cols[0], 10, safe_text(c_data['period']), 1, 0, 'C')
+    pdf.cell(cols[1], 10, f"{totals['sales']:,.2f}", 1, 0, 'C')
+    pdf.cell(cols[2], 10, f"{c_data['rate']}%", 1, 0, 'C')
+    pdf.cell(cols[3], 10, f"{totals['comm_ht']:,.2f}", 1, 1, 'C')
     
     pdf.ln(8)
     xt = 110
@@ -160,156 +179,205 @@ def generate_invoice_pdf(c_data, signature_path=None):
         else: 
             pdf.cell(50, 7, safe_text(l), 1, 0, 'L')
             pdf.cell(40, 7, f"{v:,.2f}", 1, 1, 'R')
-            
-    aline("Total Commission HT", c_data['ht'])
-    aline("TVA 20%", c_data['tva'])
-    aline("Total Facture TTC", c_data['ttc'], True, True)
+        
+    aline("Total Commission HT", totals['comm_ht'])
+    aline("TVA 20%", totals['tva'])
+    aline("Total Facture TTC", totals['inv_ttc'], True)
+    pdf.ln(2)
+    aline("NET A PAYER PARTENAIRE", totals['net_pay'], True, True)
     
-    pdf.ln(5)
+    pdf.set_y(165)
     pdf.set_font('Arial', 'I', 8)
     pdf.set_text_color(100)
-    pdf.cell(0, 5, f"Arrete la presente facture a la somme de : {c_data['ttc']:,.2f} Dirhams (TTC)", 0, 1, 'L')
+    pdf.cell(0, 5, f"Arrete la presente facture a la somme de : {totals['inv_ttc']:,.2f} Dirhams (TTC)", 0, 1, 'L')
+    pdf.cell(0, 5, "Mode de reglement : Virement bancaire sous 30 jours", 0, 1, 'L')
     
-    if signature_path and os.path.exists(signature_path):
-        y_signature = pdf.get_y() + 5
-        pdf.image(signature_path, x=140, y=y_signature, w=40)
+    return pdf.output(dest='S').encode('latin-1', errors='replace')
+
+def generate_detail_pdf(c_data, df):
+    pdf = PDFTemplate()
+    pdf.alias_nb_pages()
+    pdf.add_page()
+    r,g,b = hex_to_rgb(YASSIR_PURPLE)
+    
+    pdf.set_y(50)
+    pdf.set_font('Arial', 'B', 14)
+    pdf.set_text_color(r,g,b)
+    pdf.cell(0, 10, f"DETAIL COMMANDES - {safe_text(c_data['period'])}", 0, 1, 'C')
+    pdf.ln(5)
+    
+    pdf.set_fill_color(240)
+    pdf.set_draw_color(200)
+    pdf.set_font('Arial', 'B', 8)
+    pdf.set_text_color(0)
+    
+    cw = [40, 60, 40, 50]
+    cn = ['Date', 'ID', 'Montant', 'Statut']
+    xs = (210-sum(cw))/2
+    pdf.set_x(xs)
+    
+    for i,c in enumerate(cn): 
+        pdf.cell(cw[i], 8, safe_text(c), 1, 0, 'C', 1)
+    
+    pdf.ln()
+    pdf.set_font('Arial', '', 8)
+    
+    for _,row in df.iterrows():
+        try: 
+            m_val = float(str(row.get('Total Food', '0')).replace('MAD','').replace(' ','').replace(',','.'))
+            m_str = f"{m_val:,.2f}"
+        except: 
+            m_str = "0.00"
+            
+        pdf.set_x(xs)
+        pdf.cell(cw[0], 6, safe_text(str(row.get('order day','-'))[:10]), 1, 0, 'C')
+        pdf.cell(cw[1], 6, safe_text(str(row.get('order id','-'))), 1, 0, 'C')
+        pdf.cell(cw[2], 6, m_str, 1, 0, 'R')
+        pdf.cell(cw[3], 6, safe_text(str(row.get('status','-'))), 1, 1, 'C')
         
     return pdf.output(dest='S').encode('latin-1', errors='replace')
 
-
-# --- LECTURE ROBUSTE DU FICHIER ---
-def load_and_clean_data(file):
-    try:
-        # Lire tout le fichier en brut pour trouver la ligne d'en-tête (Restaurant name)
-        if file.name.endswith('.csv'):
-            raw_df = pd.read_csv(file, sep=None, engine='python', header=None)
-        else:
-            raw_df = pd.read_excel(file, header=None)
-
-        # Chercher la ligne qui contient "Restaurant name"
-        header_row_index = -1
-        for i, row in raw_df.iterrows():
-            if row.astype(str).str.contains('Restaurant name', case=False, na=False).any():
-                header_row_index = i
-                break
-                
-        if header_row_index == -1:
-            st.error("Impossible de trouver la colonne 'Restaurant name' dans le fichier.")
-            return None
-
-        # Re-lire le fichier en sautant les lignes inutiles au-dessus de l'en-tête
-        file.seek(0)
-        if file.name.endswith('.csv'):
-            df = pd.read_csv(file, sep=None, engine='python', skiprows=header_row_index)
-        else:
-            df = pd.read_excel(file, skiprows=header_row_index)
-
-        # Nettoyer les noms de colonnes (enlever les espaces inutiles)
-        df.columns = df.columns.str.strip()
-
-        # Nettoyage des colonnes critiques en forçant la conversion numérique (errors='coerce' remplace les textes par NaN)
-        colonnes_numeriques = ['Item total', 'Commission YASSIR', 'HT', 'TVA', 'TTC']
-        for col in colonnes_numeriques:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
-
-        # Nettoyer la colonne taux de commission pour affichage
-        if 'Taux de commission' in df.columns:
-            df['Taux de commission'] = pd.to_numeric(df['Taux de commission'], errors='coerce').fillna(0.0) * 100
-
-        # Enlever les lignes vides
-        df = df.dropna(subset=['Restaurant name'])
-        return df
-    
-    except Exception as e:
-        st.error(f"Erreur lors de la lecture du fichier : {e}")
-        return None
-
 # --- UI ---
-st.title("📄 Générateur Factures Partenaires (Commissions)")
-st.markdown("Importez le fichier **Suivi des partenaires**.")
+st.title("📄 Édition des Factures")
+st.markdown("Importez le fichier CSV. **Le Nom du partenaire sera détecté automatiquement.**")
 
-uploaded_file = st.file_uploader("📂 Fichier Suivi des partenaires", type=["csv", "xlsx"])
+uploaded_file = st.file_uploader("📂 Fichier 'Detail_....csv'", type=['csv'])
+
+def_name = "Nom Partenaire"
+df = None
 
 if uploaded_file:
-    df = load_and_clean_data(uploaded_file)
-    
-    if df is not None:
-        toutes_les_options = df['Restaurant name'].astype(str).tolist()
-        
-        st.write("### 📦 Sélection des partenaires")
-        tout_selectionner = st.checkbox("Tout sélectionner (Génération en masse)")
-        
-        if tout_selectionner:
-            selections = toutes_les_options
-        else:
-            selections = st.multiselect("Choisissez un ou plusieurs partenaires :", toutes_les_options)
+    try:
+        df = pd.read_csv(uploaded_file, sep=None, engine='python')
+        if 'restaurant name' in df.columns: 
+            def_name = df['restaurant name'].dropna().iloc[0]
+    except Exception as e: 
+        st.error(f"Erreur de lecture CSV: {e}")
 
-        if selections:
-            df_selectionne = df[df['Restaurant name'].isin(selections)]
+st.sidebar.markdown("### ⚙️ Infos Partenaire")
+c_name = st.sidebar.text_input("Nom Global", value=def_name)
+c_addr = st.sidebar.text_input("Adresse", "Adresse du restaurant...")
+c_city = st.sidebar.text_input("Ville", "CASABLANCA")
+c_ice = st.sidebar.text_input("ICE", "Ex: 00123...")
+c_rc = st.sidebar.text_input("RC", "")
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 💰 Conditions")
+c_period = st.sidebar.text_input("Période", "NOVEMBRE 2025")
+c_ref = st.sidebar.text_input("N Facture", f"F-{datetime.now().strftime('%Y%m')}-001")
+c_rate = st.sidebar.number_input("Taux %", value=15.0, step=0.5)
+
+if df is not None:
+    if 'Total Food' in df.columns:
+        # Nettoyage des données pour le global
+        clean_sales = df['Total Food'].astype(str).str.replace(r'[^\d.]', '', regex=True)
+        df['calc'] = pd.to_numeric(clean_sales, errors='coerce').fillna(0)
+        
+        # --- CALCULS GLOBAUX ---
+        sales = df['calc'].sum()
+        comm = sales * (c_rate/100)
+        tva = comm*0.20
+        ttc = comm+tva
+        net = sales-ttc
+        
+        totals = {'sales': sales, 'comm_ht': comm, 'tva': tva, 'inv_ttc': ttc, 'net_pay': net}
+        c_data = {
+            'name': c_name, 'address': c_addr, 'city': c_city, 
+            'ice': c_ice, 'rc': c_rc, 'period': c_period, 
+            'ref': c_ref, 'rate': c_rate
+        }
+
+        # --- AFFICHAGE GLOBAL ---
+        st.markdown("---")
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("Ventes (Food)", f"{sales:,.2f} DH")
+        k2.metric("Comm HT", f"{comm:,.2f} DH")
+        k3.metric("TTC Yassir", f"{ttc:,.2f} DH")
+        k4.metric("Net", f"{net:,.2f} DH", delta="Final")
+
+        st.markdown("### 🖨️ Téléchargements (Global)")
+        c1, c2 = st.columns(2)
+        
+        # Boutons Globaux
+        try:
+            b1 = base64.b64encode(generate_invoice_pdf(c_data, totals)).decode()
+            c1.markdown(f'''
+                <a href="data:application/pdf;base64,{b1}" download="Facture_Globale_{c_ref}.pdf">
+                    <button style="background-color:{YASSIR_PURPLE}; color:white; border:none; padding:12px 20px; border-radius:10px; width:100%; font-weight:bold; cursor:pointer;">
+                    📥 FACTURE GLOBALE
+                    </button>
+                </a>
+            ''', unsafe_allow_html=True)
+        except Exception as e:
+            c1.error(f"Erreur PDF Facture: {e}")
+
+        try:
+            b2 = base64.b64encode(generate_detail_pdf(c_data, df)).decode()
+            c2.markdown(f'''
+                <a href="data:application/pdf;base64,{b2}" download="Detail_Global.pdf">
+                    <button style="background-color:#6c757d; color:white; border:none; padding:12px 20px; border-radius:10px; width:100%; font-weight:bold; cursor:pointer;">
+                    📑 DÉTAIL GLOBAL
+                    </button>
+                </a>
+            ''', unsafe_allow_html=True)
+        except Exception as e:
+            c2.error(f"Erreur PDF Détail: {e}")
             
-            # Utilisation de "Commission YASSIR" ou "HT" selon ce qui existe
-            col_ht = 'HT' if 'HT' in df_selectionne.columns else 'Commission YASSIR'
-            total_ttc_global = df_selectionne['TTC'].sum() if 'TTC' in df_selectionne.columns else df_selectionne[col_ht].sum() * 1.2
-            
+        # ---------------------------------------------------------
+        # --- NOUVELLE SECTION : EXPORT PAR POINT DE VENTE (ZIP) ---
+        # ---------------------------------------------------------
+        
+        if 'restaurant name' in df.columns:
             st.markdown("---")
-            k1, k2 = st.columns(2)
-            k1.metric("Factures sélectionnées", f"{len(df_selectionne)}")
-            k2.metric("Montant TTC Global", f"{total_ttc_global:,.2f} DH")
-
-            st.markdown("### 🖨️ Téléchargements")
+            st.subheader("📦 Export Multi-Points de Vente (ZIP)")
+            st.info("Cette option génère un fichier ZIP contenant une facture et un détail pour **chaque** restaurant détecté dans le fichier.")
             
-            signature_path = None
-            if signature_file:
-                signature_path = "temp_signature.png"
-                with open(signature_path, "wb") as f:
-                    f.write(signature_file.getbuffer())
-
-            # --- GÉNÉRATION EN MASSE ---
-            if len(df_selectionne) > 1:
-                if st.button("🚀 GÉNÉRER LE ZIP DES FACTURES", use_container_width=True):
-                    progress_text = st.empty()
-                    progress_bar = st.progress(0)
-                    total_fichiers = len(df_selectionne)
-                    
+            # Utilisation de la session_state pour éviter de recalculer le zip à chaque interaction mineure
+            if st.button("🚀 GÉNÉRER LE ZIP (Factures + Détails)"):
+                
+                with st.spinner("Génération des fichiers en cours..."):
                     zip_buffer = io.BytesIO()
-                    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-                        for index, (i, ligne) in enumerate(df_selectionne.iterrows()):
-                            nom_partenaire = str(ligne.get('Restaurant name', f'Partenaire_{index}'))
-                            progress_text.text(f"⏳ Génération {index + 1}/{total_fichiers} : {nom_partenaire}...")
+                    
+                    with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
+                        # Grouper par restaurant
+                        grouped = df.groupby('restaurant name')
+                        
+                        count = 0
+                        for name, group_df in grouped:
+                            safe_name = clean_filename(name)
+                            if not safe_name: safe_name = f"Store_{count}"
                             
-                            num_facture = str(ligne.get('Facture N°', f"F-{datetime.now().strftime('%Y%m')}-{index}"))
-                            date_facture = str(ligne.get('Date de Facture', datetime.now().strftime("%d/%m/%Y")))
-                            ht = float(ligne.get(col_ht, 0.0))
+                            # Recalculer les totaux pour ce sous-groupe
+                            g_sales = group_df['calc'].sum()
+                            g_comm = g_sales * (c_rate/100)
+                            g_tva = g_comm * 0.20
+                            g_ttc = g_comm + g_tva
+                            g_net = g_sales - g_ttc
                             
-                            c_data = {
-                                "client": nom_partenaire,
-                                "adresse": str(ligne.get('Adresse', '')),
-                                "ice": str(ligne.get('ICE', '')),
-                                "num_facture": num_facture,
-                                "date_facture": date_facture[:10],
-                                "periode": str(ligne.get('Période', '')),
-                                "ventes": float(ligne.get('Item total', 0.0)),
-                                "taux": float(ligne.get('Taux de commission', 15.0)),
-                                "ht": ht,
-                                "tva": ht * 0.20,
-                                "ttc": ht * 1.20
-                            }
+                            g_totals = {'sales': g_sales, 'comm_ht': g_comm, 'tva': g_tva, 'inv_ttc': g_ttc, 'net_pay': g_net}
+                            
+                            # Copier les infos partenaires mais changer le nom par celui du restaurant spécifique
+                            g_data = c_data.copy()
+                            g_data['name'] = str(name) # Nom spécifique du point de vente
                             
                             try:
-                                pdf_bytes = generate_invoice_pdf(c_data, signature_path)
-                                nom_fichier = f"Facture_{clean_filename(num_facture)}_{clean_filename(nom_partenaire)}.pdf"
-                                zip_file.writestr(nom_fichier, pdf_bytes)
-                            except Exception as e:
-                                st.warning(f"Erreur sur {nom_partenaire}: {e}")
+                                # 1. Générer Facture PDF
+                                pdf_inv_bytes = generate_invoice_pdf(g_data, g_totals)
+                                zip_file.writestr(f"Facture_{safe_name}.pdf", pdf_inv_bytes)
                                 
-                            progress_bar.progress((index + 1) / total_fichiers)
-                    
-                    progress_text.empty()
+                                # 2. Générer Détail PDF
+                                pdf_det_bytes = generate_detail_pdf(g_data, group_df)
+                                zip_file.writestr(f"Detail_{safe_name}.pdf", pdf_det_bytes)
+                                
+                                count += 1
+                            except Exception as e:
+                                st.warning(f"Erreur sur {safe_name}: {e}")
+                                
+                    # Préparer le téléchargement du ZIP
                     b_zip = base64.b64encode(zip_buffer.getvalue()).decode()
-                    filename_zip = f"Factures_Partenaires_{datetime.now().strftime('%Y%m%d')}.zip"
+                    filename_zip = f"Batch_Factures_{datetime.now().strftime('%Y%m%d')}.zip"
                     
-                    st.success("✅ Fichiers prêts !")
+                    st.success(f"✅ Terminé ! {count} points de ventes traités.")
+                    
                     st.markdown(f'''
                         <a href="data:application/zip;base64,{b_zip}" download="{filename_zip}">
                             <button style="background-color:#28a745; color:white; border:none; padding:15px 25px; border-radius:10px; width:100%; font-size:16px; font-weight:bold; cursor:pointer;">
@@ -318,46 +386,7 @@ if uploaded_file:
                         </a>
                     ''', unsafe_allow_html=True)
 
-            # --- GÉNÉRATION UNITAIRE ---
-            elif len(df_selectionne) == 1:
-                ligne = df_selectionne.iloc[0]
-                nom_partenaire = str(ligne.get('Restaurant name', 'Partenaire'))
-                num_facture = str(ligne.get('Facture N°', f"F-{datetime.now().strftime('%Y%m')}-01"))
-                date_facture = str(ligne.get('Date de Facture', datetime.now().strftime("%d/%m/%Y")))
-                ht = float(ligne.get(col_ht, 0.0))
-                
-                c_data = {
-                    "client": nom_partenaire,
-                    "adresse": str(ligne.get('Adresse', '')),
-                    "ice": str(ligne.get('ICE', '')),
-                    "num_facture": num_facture,
-                    "date_facture": date_facture[:10],
-                    "periode": str(ligne.get('Période', '')),
-                    "ventes": float(ligne.get('Item total', 0.0)),
-                    "taux": float(ligne.get('Taux de commission', 15.0)),
-                    "ht": ht,
-                    "tva": ht * 0.20,
-                    "ttc": ht * 1.20
-                }
-                
-                try:
-                    with st.spinner("Génération de la facture..."):
-                        pdf_bytes = generate_invoice_pdf(c_data, signature_path)
-                        b_pdf = base64.b64encode(pdf_bytes).decode()
-                        nom_fichier = f"Facture_{clean_filename(nom_partenaire)}.pdf"
-                    
-                    st.markdown(f'''
-                        <a href="data:application/pdf;base64,{b_pdf}" download="{nom_fichier}">
-                            <button style="background-color:{YASSIR_PURPLE}; color:white; border:none; padding:15px 25px; border-radius:10px; width:100%; font-size:16px; font-weight:bold; cursor:pointer;">
-                            📥 TÉLÉCHARGER LA FACTURE
-                            </button>
-                        </a>
-                    ''', unsafe_allow_html=True)
-                except Exception as e:
-                    st.error(f"Erreur PDF: {e}")
-
-            if signature_path and os.path.exists(signature_path):
-                os.remove(signature_path)
-
+    else: 
+        st.error("❌ Colonne 'Total Food' manquante.")
 else:
     st.info("Attente du fichier...")
