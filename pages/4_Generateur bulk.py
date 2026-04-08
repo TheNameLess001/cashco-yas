@@ -315,10 +315,15 @@ if uploaded_file:
         if missing:
             st.error(f"❌ Colonnes manquantes : {', '.join(missing)}")
         else:
-            df_to_process = df[df['Facture N°'].isna() | (df['Facture N°'].astype(str).str.strip().lower() == 'nan') | (df['Facture N°'].astype(str).str.strip() == '')].copy()
+            # CORRECTION ICI: Utilisation de .str.lower() au lieu de .lower()
+            df_to_process = df[
+                df['Facture N°'].isna() | 
+                (df['Facture N°'].astype(str).str.strip().str.lower() == 'nan') | 
+                (df['Facture N°'].astype(str).str.strip() == '')
+            ].copy()
             
             if df_to_process.empty:
-                st.warning("⚠️ Toutes les lignes sont déjà traitées.")
+                st.warning("⚠️ Toutes les lignes sont déjà traitées (Facture N° est rempli partout).")
             else:
                 st.success(f"✅ {len(df_to_process)} lignes prêtes à être traitées.")
                 
