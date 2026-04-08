@@ -53,7 +53,6 @@ def get_str(val, default=""):
     if isinstance(val, float) and val.is_integer():
         return str(int(val))
     s = str(val).strip()
-    # Parfois Pandas lit un ICE long comme une string terminée par .0
     if s.endswith('.0') and s[:-2].replace('.', '').isdigit():
         return s[:-2]
     return s
@@ -142,7 +141,7 @@ def generate_invoice_pdf(row_data, totals, invoice_date, invoice_type, invoice_r
     display_date = invoice_date if invoice_date else "-" 
     pdf.cell(90, 6, f"Date: {safe_text(display_date)}", 0, 1, 'R')
     
-    # --- BLOC DESTINATAIRE (Avec filtres anti-nan) ---
+    # --- BLOC DESTINATAIRE ---
     sy = 50
     pdf.set_fill_color(248, 248, 248)
     pdf.set_draw_color(220, 220, 220)
@@ -150,7 +149,6 @@ def generate_invoice_pdf(row_data, totals, invoice_date, invoice_type, invoice_r
     pdf.set_fill_color(*YASSIR_RGB)
     pdf.rect(10, sy, 3, 35, 'F')
     
-    # Récupération Raison Sociale, sinon Nom du Resto
     client_name = get_str(row_data.get('Raison sociale'))
     if not client_name:
         client_name = get_str(row_data.get('Restaurant name'), 'Client Inconnu')
@@ -188,7 +186,7 @@ def generate_invoice_pdf(row_data, totals, invoice_date, invoice_type, invoice_r
         hd = ['Période', 'Ventes (TTC)', 'Taux Comm.', 'Commission (TTC)']
         val_col1 = totals['sales_ttc']
         val_col3 = totals['inv_ttc']
-    else: # grouped
+    else: 
         hd = ['Période', 'Note Debours', 'Taux Comm.', 'Commission HT']
         val_col1 = totals['sales_ttc']
         val_col3 = totals['comm_ht']
@@ -305,7 +303,6 @@ uploaded_file = st.file_uploader("📂 Charger le fichier Excel (xlsx)", type=['
 
 if uploaded_file:
     try:
-        # On lit le fichier avec header=10 comme dans votre code
         df = pd.read_excel(uploaded_file, header=10)
         df.columns = df.columns.str.strip()
         
@@ -315,7 +312,10 @@ if uploaded_file:
         if missing:
             st.error(f"❌ Colonnes manquantes : {', '.join(missing)}")
         else:
-            # CORRECTION ICI: Utilisation de .str.lower() au lieu de .lower()
+            # ---> CORRECTION CRITIQUE ICI <---
+            # On force la colonne en texte (object) pour éviter que pandas interdise d'y mettre des lettres/symboles
+            df['Facture N°'] = df['Facture N°'].astype(object)
+            
             df_to_process = df[
                 df['Facture N°'].isna() | 
                 (df['Facture N°'].astype(str).str.strip().str.lower() == 'nan') | 
@@ -362,18 +362,16 @@ if uploaded_file:
                             
                             for count, (index, row) in enumerate(df_to_process.iterrows()):
                                 try:
-                                    # --- RÉCUPÉRATION ET CALCULS INTELLIGENTS ---
                                     sales_ttc = get_num(row.get('Item total'), 0.0)
                                     sales_ht = sales_ttc / 1.2 
                                     
                                     raw_rate = get_num(row.get('Taux de commission'), 0.0)
                                     rate_decimal = (raw_rate / 100.0) if raw_rate > 1.0 else raw_rate
                                     
-                                    # Fallback : Si la case HT est vide/zéro, on cherche "Commission YASSIR"
                                     comm_ht = get_num(row.get('HT'), 0.0)
                                     if comm_ht == 0.0:
                                         comm_ht = get_num(row.get('Commission YASSIR'), 0.0)
-                                    if comm_ht == 0.0:  # Dernier recours, on le calcule
+                                    if comm_ht == 0.0:
                                         comm_ht = sales_ht * rate_decimal
                                         
                                     tva = get_num(row.get('TVA'), 0.0)
