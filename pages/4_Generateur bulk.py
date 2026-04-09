@@ -13,7 +13,7 @@ from num2words import num2words
 YASSIR_PURPLE = "#6f42c1"
 YASSIR_RGB = (111, 66, 193)
 LOGO_PATH = "logo.png"
-CACHET_PATH = "cachet.png" # Chemin par défaut du cachet
+CACHET_PATH = "cachet.png" 
 
 st.set_page_config(page_title="Générateur Factures Yassir", page_icon="📄", layout="wide")
 
@@ -40,35 +40,22 @@ st.markdown(f"""
     </style>
 """, unsafe_allow_html=True)
 
-# --- FONCTIONS UTILITAIRES INTÉLLIGENTES ---
+# --- FONCTIONS UTILITAIRES ---
 def safe_text(text):
-    """Nettoie le texte pour le PDF et supprime les nan"""
     if text is None or pd.isna(text) or str(text).strip().lower() == 'nan': return ""
     return str(text).encode('latin-1', 'replace').decode('latin-1')
 
-def get_str(val, default=""):
-    """Extrait un texte proprement et gère les ICE en format float (ex: 123.0 -> 123)"""
-    if pd.isna(val) or str(val).strip().lower() == 'nan' or str(val).strip() == '':
-        return default
-    if isinstance(val, float) and val.is_integer():
-        return str(int(val))
-    s = str(val).strip()
-    if s.endswith('.0') and s[:-2].replace('.', '').isdigit():
-        return s[:-2]
-    return s
+def clean_filename(name):
+    if pd.isna(name) or str(name).strip().lower() == 'nan': return "Client"
+    return "".join([c for c in str(name) if c.isalnum() or c in (' ', '-', '_')]).strip()
 
-def get_num(val, default=0.0):
-    """Extrait un nombre proprement depuis n'importe quel format (DH, MAD, espaces)"""
-    if pd.isna(val) or str(val).strip().lower() == 'nan' or str(val).strip() == '':
-        return default
+def clean_currency(value):
+    if pd.isna(value) or str(value).strip().lower() == 'nan' or value == '': return 0.0
+    s = str(value).replace('DH', '').replace('MAD', '').replace(' ', '').replace(',', '.')
     try:
-        s = str(val).replace('DH', '').replace('MAD', '').replace(' ', '').replace(',', '.')
         return float(s)
     except:
-        return default
-
-def clean_filename(name):
-    return "".join([c for c in str(name) if c.isalnum() or c in (' ', '-', '_')]).strip()
+        return 0.0
 
 def format_date_virement(date_val):
     if pd.isna(date_val) or str(date_val).strip() == "" or str(date_val).strip().lower() == 'nan':
@@ -83,6 +70,17 @@ def format_date_virement(date_val):
         return d_str
     except:
         return str(date_val)
+
+def get_str(val, default=""):
+    """Nouvelle fonction juste pour masquer les 'nan' dans le PDF sans toucher aux calculs"""
+    if pd.isna(val) or str(val).strip().lower() == 'nan' or str(val).strip() == '':
+        return default
+    if isinstance(val, float) and val.is_integer():
+        return str(int(val))
+    s = str(val).strip()
+    if s.endswith('.0') and s[:-2].replace('.', '').isdigit():
+        return s[:-2]
+    return s
 
 # --- CLASSE PDF ---
 class PDFTemplate(FPDF):
@@ -120,7 +118,6 @@ def generate_invoice_pdf(row_data, totals, invoice_date, invoice_type, invoice_r
     pdf.alias_nb_pages()
     pdf.add_page()
     
-    # TITRE SELON LE TYPE
     pdf.set_xy(110, 50)
     pdf.set_font('Arial', 'B', 14)
     pdf.set_text_color(*YASSIR_RGB)
@@ -134,7 +131,7 @@ def generate_invoice_pdf(row_data, totals, invoice_date, invoice_type, invoice_r
     pdf.set_x(110)
     pdf.set_font('Arial', 'B', 10)
     pdf.set_text_color(0)
-    pdf.cell(90, 6, f"N°: {safe_text(invoice_ref)}", 0, 1, 'R')
+    pdf.cell(90, 6, f"N: {safe_text(invoice_ref)}", 0, 1, 'R')
     
     pdf.set_x(110)
     pdf.set_font('Arial', '', 10)
@@ -149,10 +146,10 @@ def generate_invoice_pdf(row_data, totals, invoice_date, invoice_type, invoice_r
     pdf.set_fill_color(*YASSIR_RGB)
     pdf.rect(10, sy, 3, 35, 'F')
     
+    # Nettoyage des nan pour le nom et l'adresse
     client_name = get_str(row_data.get('Raison sociale'))
-    if not client_name:
-        client_name = get_str(row_data.get('Restaurant name'), 'Client Inconnu')
-
+    if not client_name: client_name = get_str(row_data.get('Restaurant name'), 'Client')
+        
     pdf.set_xy(16, sy+4)
     pdf.set_font('Arial', 'B', 10)
     pdf.set_text_color(0)
@@ -161,7 +158,7 @@ def generate_invoice_pdf(row_data, totals, invoice_date, invoice_type, invoice_r
     pdf.set_xy(16, sy+10)
     pdf.set_font('Arial', '', 9)
     pdf.set_text_color(60)
-    adresse_text = get_str(row_data.get('Adresse'), 'Adresse non renseignée')
+    adresse_text = get_str(row_data.get('Adresse'), 'Casablanca')
     pdf.multi_cell(80, 4, safe_text(adresse_text), 0, 'L')
     
     ice_str = get_str(row_data.get('ICE'))
@@ -179,15 +176,15 @@ def generate_invoice_pdf(row_data, totals, invoice_date, invoice_type, invoice_r
     cols = [60, 40, 40, 50]
     
     if invoice_type == 'commission':
-        hd = ['Période', 'Base de calcul', 'Taux Comm.', 'Commission HT']
+        hd = ['Periode', 'Base de calcul', 'Taux Comm.', 'Commission HT']
         val_col1 = totals['sales_ttc']
         val_col3 = totals['comm_ht']
     elif invoice_type == 'debours':
-        hd = ['Période', 'Ventes (TTC)', 'Taux Comm.', 'Commission (TTC)']
+        hd = ['Periode', 'Ventes (TTC)', 'Taux Comm.', 'Commission (TTC)']
         val_col1 = totals['sales_ttc']
         val_col3 = totals['inv_ttc']
     else: 
-        hd = ['Période', 'Note Debours', 'Taux Comm.', 'Commission HT']
+        hd = ['Periode', 'Note Debours', 'Taux Comm.', 'Commission HT']
         val_col1 = totals['sales_ttc']
         val_col3 = totals['comm_ht']
         
@@ -201,16 +198,22 @@ def generate_invoice_pdf(row_data, totals, invoice_date, invoice_type, invoice_r
     
     period_val = get_str(row_data.get('Période'), '-')
     
-    raw_rate = get_num(row_data.get('Taux de commission'), 0.0)
-    if raw_rate < 1.0 and raw_rate != 0: 
-        rate_val_disp = f"{(raw_rate * 100):g}"
-    else:
-        rate_val_disp = f"{raw_rate:g}"
+    raw_rate = row_data.get('Taux de commission', '0')
+    try:
+        if pd.isna(raw_rate) or str(raw_rate).strip().lower() == 'nan':
+            rate_val_disp = "0"
+        else:
+            rate_float = float(str(raw_rate).replace('%', '').replace(',', '.'))
+            if rate_float < 1.0 and rate_float != 0: 
+                rate_float *= 100
+            rate_val_disp = f"{rate_float:g}"
+    except:
+        rate_val_disp = "0"
         
     pdf.cell(cols[0], 10, safe_text(period_val), 1, 0, 'C')
-    pdf.cell(cols[1], 10, f"{val_col1:,.2f} DH", 1, 0, 'C')
+    pdf.cell(cols[1], 10, f"{val_col1:,.2f}", 1, 0, 'C')
     pdf.cell(cols[2], 10, f"{rate_val_disp}%", 1, 0, 'C')
-    pdf.cell(cols[3], 10, f"{val_col3:,.2f} DH", 1, 1, 'C')
+    pdf.cell(cols[3], 10, f"{val_col3:,.2f}", 1, 1, 'C')
 
     # --- TOTAUX ---
     pdf.ln(8)
@@ -227,7 +230,7 @@ def generate_invoice_pdf(row_data, totals, invoice_date, invoice_type, invoice_r
             pdf.cell(40, 9, f"{v:,.2f} DH", 0, 1, 'R', 1)
         else: 
             pdf.cell(50, 7, safe_text(l), 1, 0, 'L')
-            pdf.cell(40, 7, f"{v:,.2f} DH", 1, 1, 'R')
+            pdf.cell(40, 7, f"{v:,.2f}", 1, 1, 'R')
 
     if invoice_type == 'commission':
         aline("Total Commission HT", totals['comm_ht'])
@@ -237,7 +240,7 @@ def generate_invoice_pdf(row_data, totals, invoice_date, invoice_type, invoice_r
         word_label = "Total Facture TTC"
     elif invoice_type == 'debours':
         aline("Total du panier (TTC)", totals['sales_ttc'])
-        aline("Déduction Yassir (TTC)", totals['inv_ttc']) 
+        aline("Deduction Yassir (TTC)", totals['inv_ttc']) 
         aline("Total à payer TTC", totals['net_pay'], True, True)
         amount_to_word = totals['net_pay']
         word_label = "Total à payer TTC"
@@ -263,10 +266,10 @@ def generate_invoice_pdf(row_data, totals, invoice_date, invoice_type, invoice_r
     except:
         text_amount = f"{amount_to_word:,.2f} DIRHAMS"
 
-    pdf.multi_cell(0, 5, f"Arrêté le présent document à la somme de : {safe_text(text_amount)} ({word_label})", 0, 'L')
+    pdf.multi_cell(0, 5, f"Arrete le present document a la somme de : {safe_text(text_amount)} ({word_label})", 0, 'L')
     
     rib = get_str(row_data.get('RIB', ''))
-    if len(rib) > 5 and 'nan' not in rib.lower():
+    if len(rib) > 5:
         pdf.ln(2)
         pdf.set_font('Arial', '', 8)
         pdf.cell(0, 5, f"RIB Paiement : {rib}", 0, 1, 'L')
@@ -312,10 +315,11 @@ if uploaded_file:
         if missing:
             st.error(f"❌ Colonnes manquantes : {', '.join(missing)}")
         else:
-            # ---> CORRECTION CRITIQUE ICI <---
-            # On force la colonne en texte (object) pour éviter que pandas interdise d'y mettre des lettres/symboles
+            
+            # ---> CORRECTION DE L'ERREUR CRITIQUE float64 (Conversion sécurisée) <---
             df['Facture N°'] = df['Facture N°'].astype(object)
             
+            # --- FILTRAGE AVEC CORRECTION (str.lower()) ---
             df_to_process = df[
                 df['Facture N°'].isna() | 
                 (df['Facture N°'].astype(str).str.strip().str.lower() == 'nan') | 
@@ -323,7 +327,7 @@ if uploaded_file:
             ].copy()
             
             if df_to_process.empty:
-                st.warning("⚠️ Toutes les lignes sont déjà traitées (Facture N° est rempli partout).")
+                st.warning("⚠️ Toutes les lignes sont déjà traitées.")
             else:
                 st.success(f"✅ {len(df_to_process)} lignes prêtes à être traitées.")
                 
@@ -362,26 +366,26 @@ if uploaded_file:
                             
                             for count, (index, row) in enumerate(df_to_process.iterrows()):
                                 try:
-                                    sales_ttc = get_num(row.get('Item total'), 0.0)
+                                    # ---> CALCULS ORIGINAUX INTACTS (Non modifiés) <---
+                                    sales_ttc = clean_currency(row.get('Item total', 0))
                                     sales_ht = sales_ttc / 1.2 
                                     
-                                    raw_rate = get_num(row.get('Taux de commission'), 0.0)
-                                    rate_decimal = (raw_rate / 100.0) if raw_rate > 1.0 else raw_rate
+                                    raw_rate = row.get('Taux de commission', 0)
+                                    rate_decimal = 0.0
+                                    try:
+                                        if not pd.isna(raw_rate) and str(raw_rate).strip().lower() != 'nan':
+                                            s_rate = str(raw_rate).replace('%', '').replace(',', '.').strip()
+                                            val = float(s_rate)
+                                            if val > 1.0: 
+                                                rate_decimal = val / 100.0
+                                            else:
+                                                rate_decimal = val
+                                    except:
+                                        rate_decimal = 0.0
                                     
-                                    comm_ht = get_num(row.get('HT'), 0.0)
-                                    if comm_ht == 0.0:
-                                        comm_ht = get_num(row.get('Commission YASSIR'), 0.0)
-                                    if comm_ht == 0.0:
-                                        comm_ht = sales_ht * rate_decimal
-                                        
-                                    tva = get_num(row.get('TVA'), 0.0)
-                                    if tva == 0.0:
-                                        tva = comm_ht * 0.20
-                                        
-                                    ttc = get_num(row.get('TTC'), 0.0)
-                                    if ttc == 0.0:
-                                        ttc = comm_ht + tva
-                                        
+                                    comm_ht = sales_ht * rate_decimal
+                                    tva = comm_ht * 0.20
+                                    ttc = comm_ht + tva
                                     net_pay_final = sales_ttc - ttc
                                     
                                     totals = {
